@@ -1,24 +1,31 @@
 """Video file -> list of violations for the API (pipeline from CLAUDE.md)."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from config import CONFIG
 from pipeline.events import describe, evidence_times, find_events, merge_events
 from pipeline.model import Detector, Verifier, build_scene_state
-from pipeline.video import encode_jpeg, iter_frames, read_frames_at
+from pipeline.video import duration_sec, encode_jpeg, iter_frames, read_frames_at
 from rules import load_active_rules
 from schemas import EvidenceFrame, Violation
 
 
-def analyze_video(video_path: Path) -> list[Violation]:
+def analyze_video(video_path: Path, start_sec: float | None = None, end_sec: float | None = None,
+                  on_progress: Callable[[float], None] = lambda p: None) -> list[Violation]:
+    """Analyze the whole video, or only [start_sec, end_sec] if given.
+    `on_progress(0..1)` is called as frames are processed (for the UI's percentage)."""
+    seg_start = start_sec or 0.0
+    seg_end = min(end_sec or float("inf"), duration_sec(video_path)) or 1.0
     types, norms = load_active_rules()
     detector, verifier = Detector(), Verifier()  # TODO(ml): create once at startup instead
 
     # 1–3. Decode, detect + track, scene state — one streaming pass over the video.
-    states = [
-        build_scene_state(frame.timestamp_sec, detector.detect(frame))
-        for frame in iter_frames(video_path, CONFIG["video"]["sample_fps"], CONFIG["video"]["max_side_px"])
-    ]
+    states = []
+    for frame in iter_frames(video_path, CONFIG["video"]["sample_fps"], CONFIG["video"]["max_side_px"],
+                             start_sec, end_sec):
+        states.append(build_scene_state(frame.timestamp_sec, detector.detect(frame)))
+        on_progress(0.9 * min(1.0, (frame.timestamp_sec - seg_start) / max(seg_end - seg_start, 1e-6)))
 
     # 4–6. Candidate events -> VLM check -> merge + confidence filter.
     candidates = find_events(states, set(types))

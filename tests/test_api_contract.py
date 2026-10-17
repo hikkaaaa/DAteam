@@ -67,6 +67,21 @@ def test_rejects_non_mov(client, tmp_path):
     assert upload(client, path).status_code == 415
 
 
+def test_segment(client, mov_file, monkeypatch):
+    seen = {}
+    monkeypatch.setattr("main.analyze_video", lambda path, start, end, **_: seen.update(start=start, end=end) or [])
+    with open(mov_file, "rb") as f:
+        r = client.post("/api/v1/analyze", files={"file": (mov_file.name, f, "video/quicktime")},
+                        data={"start_sec": "0.5", "end_sec": "1.5"}, headers=HEADERS)
+    assert wait_for_job(client, r.json()["job_id"])["verdict"] == "no_violation"
+    assert seen == {"start": 0.5, "end": 1.5}
+
+    with open(mov_file, "rb") as f:
+        bad = client.post("/api/v1/analyze", files={"file": (mov_file.name, f, "video/quicktime")},
+                          data={"start_sec": "2", "end_sec": "1"}, headers=HEADERS)
+    assert bad.status_code == 400
+
+
 def test_rejects_too_large(client, mov_file, monkeypatch):
     from config import CONFIG
 
@@ -89,6 +104,9 @@ def test_no_violation_flow(client, mov_file):
     assert body["status"] == "done"
     assert body["verdict"] == "no_violation"
     assert body["violations"] == []
+    assert set(body) == {"job_id", "status", "verdict", "violations"}  # exactly the ТЗ fields
+    progress = client.get(f"/api/v1/jobs/{job_id}/progress", headers=HEADERS).json()
+    assert progress == {"progress": 1.0}
 
 
 def test_violation_shape(client, mov_file, monkeypatch, tmp_path):
@@ -104,7 +122,7 @@ def test_violation_shape(client, mov_file, monkeypatch, tmp_path):
         type="Тестовый тип", timecode_sec=1.5, description="Тест",
         evidence_frames=[EvidenceFrame(timestamp_sec=1.5, image_base64=jpeg_b64)],
     )]
-    monkeypatch.setattr("main.analyze_video", lambda *_: fake)
+    monkeypatch.setattr("main.analyze_video", lambda *_, **__: fake)
 
     body = wait_for_job(client, upload(client, mov_file).json()["job_id"])
     assert body["status"] == "done"

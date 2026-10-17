@@ -9,26 +9,55 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <h1>Кассовый контроль</h1>
-      <p class="muted">Анализ видео работы кассира</p>
+    <div class="brand">
+      <!-- Official ForteBank logo: put it at frontend/assets/forte-logo.svg (hidden until the file exists) -->
+      <img class="brand-logo" src="assets/forte-logo.svg" alt="ForteBank" onerror="this.remove()">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg>
+      </span>
+      <div>
+        <h1>Кассовый контроль</h1>
+        <p class="muted">ForteBank · анализ видео работы кассира</p>
+      </div>
     </div>
-    <button id="key-button" class="button ghost" type="button"><span id="key-dot" class="dot"></span>API-ключ</button>
+    <div class="topbar-actions">
+      <button id="history-button" class="button ghost" type="button">История <span id="history-count" class="count"></span></button>
+      <button id="key-button" class="button ghost" type="button"><span id="key-dot" class="dot"></span>API-ключ</button>
+    </div>
   </header>
 
   <main class="layout">
-    <section class="panel">
+    <section class="panel upload">
       <label id="dropzone" class="dropzone">
         <input id="file-input" type="file" accept=".mov,video/quicktime" hidden>
+        <span class="dropzone-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 15V4m0 0-4 4m4-4 4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+        </span>
         <strong>Перетащите видео сюда</strong>
         <span class="muted">или нажмите, чтобы выбрать файл · формат .mov</span>
+        <!-- Sample videos live in frontend/assets/demo/ (git-ignored). Replace with real examples later. -->
+        <span class="samples">
+          <button class="sample" type="button" data-src="assets/demo/sample-violation.mov" data-name="Пример — с нарушением.mov">🎬 Пример 1: с нарушением</button>
+          <button class="sample" type="button" data-src="assets/demo/sample-clean.mov" data-name="Пример — без нарушений.mov">🎬 Пример 2: без нарушений</button>
+        </span>
       </label>
 
       <div id="player" hidden>
+        <button id="back-button" class="back" type="button">← Назад</button>
         <video id="video" controls playsinline preload="metadata"></video>
-        <div id="timeline" class="timeline"><div id="progress" class="progress"></div></div>
+        <div id="timeline" class="timeline">
+          <div id="progress" class="progress"></div>
+          <div id="selection" class="selection" hidden></div>
+        </div>
+        <div class="range-info">
+          <span id="range-text" class="range-text"></span>
+          <button id="range-clear" class="link" type="button" hidden>Сбросить</button>
+        </div>
         <div class="file-bar">
-          <span id="file-name" class="file-name"></span>
+          <span class="file-info">
+            <span id="file-name" class="file-name"></span>
+            <span id="file-meta" class="muted"></span>
+          </span>
           <button id="change-button" class="button ghost" type="button">Другое видео</button>
           <button id="analyze-button" class="button primary" type="button">Анализировать</button>
         </div>
@@ -54,6 +83,17 @@
         <button class="button ghost" value="cancel">Отмена</button>
         <button class="button primary" value="save">Сохранить</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog id="history-dialog" class="history-drawer">
+    <form method="dialog">
+      <div class="drawer-head">
+        <h3>История</h3>
+        <button class="close" aria-label="Закрыть" autofocus>×</button>
+      </div>
+      <p class="muted">Последние 10 видео. Очищается при перезагрузке страницы.</p>
+      <div id="history-list" class="history-list"></div>
     </form>
   </dialog>
 

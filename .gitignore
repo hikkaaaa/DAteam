@@ -23,3 +23,6 @@ reports/errors/
 
 # Training runs
 training/runs/
+
+# Demo videos are real footage: keep them out of git
+frontend/assets/demo/*.mov

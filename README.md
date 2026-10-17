@@ -22,6 +22,8 @@ Docker + GPU: `docker compose up --build` · Tests: `pytest tests`
 ```
 backend/
   main.py              API (POST /api/v1/analyze, GET /api/v1/jobs/{id}), auth, job queue
+                       analyze also takes optional start_sec / end_sec (segment; not in the ТЗ)
+                       GET /api/v1/jobs/{id}/progress -> {"progress": 0..1} (for the UI; not in the ТЗ)
   schemas.py           response format fixed by the ТЗ
   rules.py             loads rules/*.yaml
   pipeline/

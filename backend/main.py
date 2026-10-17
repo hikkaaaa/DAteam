@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 
 from config import CONFIG, ROOT, api_key, path
@@ -31,14 +31,16 @@ logger = logging.getLogger(__name__)
 # ---------- Background jobs ----------
 # In-memory store: fine for one process. For several workers, move to Redis.
 jobs: dict[str, JobResponse] = {}
+progress: dict[str, float] = {}  # job_id -> 0..1, served by the optional /progress endpoint
 jobs_lock = threading.Lock()
 executor: ThreadPoolExecutor | None = None
 
 
-def run_job(job_id: str, video_path: Path) -> None:
+def run_job(job_id: str, video_path: Path, start_sec: float | None, end_sec: float | None) -> None:
     started = time.perf_counter()
     try:
-        violations = analyze_video(video_path)
+        violations = analyze_video(video_path, start_sec, end_sec,
+                                   on_progress=lambda p: progress.__setitem__(job_id, p))
         elapsed = time.perf_counter() - started
         if elapsed > CONFIG["jobs"]["target_processing_sec"]:
             logger.warning("Job %s took %.1fs, over the time budget", job_id, elapsed)
@@ -53,6 +55,7 @@ def run_job(job_id: str, video_path: Path) -> None:
             video_path.unlink(missing_ok=True)
     with jobs_lock:
         jobs[job_id] = result
+        progress[job_id] = 1.0
 
 
 @asynccontextmanager
@@ -81,7 +84,12 @@ def health() -> dict:
 
 
 @app.post("/api/v1/analyze", dependencies=[Depends(require_api_key)])
-def analyze(file: UploadFile = File(...)) -> dict:
+def analyze(file: UploadFile = File(...),
+            start_sec: float | None = Form(None), end_sec: float | None = Form(None)) -> dict:
+    """`start_sec` / `end_sec` are optional (not in the ТЗ): analyze only that segment of the video."""
+    if (start_sec is not None and start_sec < 0) or \
+            (start_sec is not None and end_sec is not None and end_sec <= start_sec):
+        raise HTTPException(400, "Invalid segment: need 0 <= start_sec < end_sec")
     extension = Path(file.filename or "").suffix.lower()
     if extension not in CONFIG["server"]["allowed_extensions"]:
         raise HTTPException(415, f"Unsupported file type '{extension}'")
@@ -97,7 +105,8 @@ def analyze(file: UploadFile = File(...)) -> dict:
 
     with jobs_lock:
         jobs[job_id] = JobResponse(job_id=job_id, status="processing")
-    executor.submit(run_job, job_id, video_path)
+        progress[job_id] = 0.0
+    executor.submit(run_job, job_id, video_path, start_sec, end_sec)
     return {"job_id": job_id}
 
 
@@ -109,6 +118,15 @@ def get_job(job_id: str) -> JobResponse:
     if job is None:
         raise HTTPException(404, "Job not found")
     return job
+
+
+@app.get("/api/v1/jobs/{job_id}/progress", dependencies=[Depends(require_api_key)])
+def get_progress(job_id: str) -> dict:
+    """Optional (not in the ТЗ): processing progress 0..1 for the UI's percentage."""
+    with jobs_lock:
+        if job_id not in progress:
+            raise HTTPException(404, "Job not found")
+        return {"progress": round(progress[job_id], 3)}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")

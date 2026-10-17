@@ -17,18 +17,32 @@ class Frame:
     image: np.ndarray     # RGB, HxWx3, uint8
 
 
-def iter_frames(video_path: Path, fps: float, max_side_px: int | None = None) -> Iterator[Frame]:
-    """Stream frames at ~`fps` (never loads the whole video into memory)."""
-    step, next_ts = 1.0 / fps, 0.0
+def iter_frames(video_path: Path, fps: float, max_side_px: int | None = None,
+                start_sec: float | None = None, end_sec: float | None = None) -> Iterator[Frame]:
+    """Stream frames at ~`fps` (never loads the whole video into memory).
+    `start_sec` / `end_sec` limit decoding to a segment; timestamps stay relative to the full video."""
+    step, next_ts = 1.0 / fps, start_sec or 0.0
     with av.open(str(video_path)) as container:
         stream = container.streams.video[0]
         stream.thread_type = "AUTO"
+        if start_sec:
+            container.seek(int(start_sec / stream.time_base), stream=stream, backward=True)
         for frame in container.decode(stream):
+            if end_sec is not None and frame.time is not None and frame.time > end_sec + 1e-6:
+                break
             if frame.time is None or frame.time + 1e-6 < next_ts:
                 continue
             yield Frame(float(frame.time), _to_rgb(frame, max_side_px))
             while next_ts <= frame.time + 1e-6:  # stay on a fixed sampling grid
                 next_ts += step
+
+
+def duration_sec(video_path: Path) -> float:
+    with av.open(str(video_path)) as container:
+        stream = container.streams.video[0]
+        if stream.duration is not None:
+            return float(stream.duration * stream.time_base)
+        return (container.duration or 0) / av.time_base
 
 
 def read_frames_at(video_path: Path, timestamps: list[float], max_side_px: int | None = None) -> list[Frame]:
