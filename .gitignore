@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Secrets
+.env
+
+# Large / local-only artifacts (never commit)
+weights/*
+!weights/.gitkeep
+data/*
+!data/.gitkeep
+storage/
+reports/errors/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Training runs
+training/runs/

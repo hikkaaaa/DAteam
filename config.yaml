@@ -1,0 +1,58 @@
+# All pipeline thresholds and parameters live here (CLAUDE.md: "не хардкодить").
+# Paths are relative to the repository root.
+
+server:
+  allowed_extensions: [".mov"]   # ТЗ: only .mov. Add ".mp4" locally if needed for experiments.
+  max_upload_mb: 2048
+
+storage:
+  uploads_dir: storage/uploads
+  delete_video_after_processing: true
+
+jobs:
+  # 1 = one video at a time on a single GPU. Raise only if VRAM allows.
+  max_concurrent_jobs: 1
+  # Soft budget from the ТЗ (5 min hard limit, aim for 3). Exceeding it is logged as a warning.
+  target_processing_sec: 180
+
+video:
+  sample_fps: 3                  # 2–5 fps per CLAUDE.md
+  max_side_px: 1280              # frames are downscaled before detection (null = keep original)
+
+detection:
+  # TODO(ml): fill in once the detector is trained / chosen.
+  weights_path: weights/detector.pt
+  device: cuda                   # "cuda" | "cpu" | "mps"
+  confidence_threshold: 0.35
+  iou_threshold: 0.5
+  tracker: bytetrack.yaml        # ultralytics tracker config: bytetrack.yaml | botsort.yaml
+  # Class names the scene-state step expects. Must match the detector's label map.
+  classes: [person, hand, cash, cash_bundle, safe, drawer, phone]
+
+scene:
+  # TODO(ml): zones in normalized coordinates [x1, y1, x2, y2], per camera angle.
+  zones:
+    cash_desk: null
+    safe: null
+
+rules:
+  norms_path: rules/norms.yaml
+  violation_types_path: rules/violation_types.yaml
+
+detectors:
+  # Parameters for each rule detector in backend/pipeline/events.py.
+  # TODO(data): tune on the training split, then re-run scripts/evaluate.py.
+  V01:
+    min_duration_sec: 30
+
+vlm:
+  enabled: false                 # TODO(ml): enable once a local VLM is in weights/
+  weights_path: weights/vlm
+  frames_per_candidate: 4
+  min_agreement: 0.5             # share of frames on which the VLM confirms the event
+
+postprocess:
+  merge_gap_sec: 3.0             # same-type events closer than this are merged
+  min_confidence: 0.6            # precision first: drop anything below
+  max_evidence_frames: 3         # API allows 1–3
+  evidence_jpeg_quality: 85

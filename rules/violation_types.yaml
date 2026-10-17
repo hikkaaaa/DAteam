@@ -1,0 +1,20 @@
+# Violation type registry — machine-readable copy of the table in CLAUDE.md.
+#
+# A type is emitted by the API only when ALL of these hold:
+#   - status: confirmed            (confirmed by dataset examples)
+#   - rule_id exists in norms.yaml (with a verbatim quote)
+#   - a detector for it is registered in backend/pipeline/events.py
+#
+# `description_template` is filled from the event's observed facts (Python str.format).
+# Facts always available: {start_sec}, {end_sec}, {duration_sec}. Detectors may add more.
+# Use only observable facts — no intent, no amounts, nothing outside the frame.
+# The rule sentence ("Это может указывать на нарушение ...") is appended automatically.
+#
+# Example (draft, never emitted until confirmed):
+
+- id: V01
+  type: "Оставление денежных средств без присмотра"
+  visual_criterion: "Кассир покидает зону кассы, деньги остаются на столе дольше N секунд"
+  rule_id: null                  # TODO(data): R-id from norms.yaml
+  status: draft                  # draft | confirmed
+  description_template: "Кассир отходит от рабочего места, денежные средства остаются на столе {duration_sec:.0f} с."

@@ -1,0 +1,21 @@
+# Normative base. The ONLY source of rule references in API output (CLAUDE.md).
+#
+# Rules for adding an entry:
+#   - Sources: adilet.zan.kz or the NBRK website, current editions only.
+#   - `quote` must be copied verbatim. If no verbatim quote was found, do not add the entry.
+#   - Never invent document numbers or clause numbers.
+#   - Entries missing any required field are ignored by the loader (backend/rules.py).
+#
+# Template (copy, uncomment, fill in):
+#
+# - id: R01
+#   document: "Полное официальное название акта"
+#   number_date: "номер и дата принятия"
+#   clause: "пункт / подпункт / раздел"
+#   quote: "дословная цитата пункта"
+#   url: "https://adilet.zan.kz/..."
+#   checked_at: "YYYY-MM-DD"
+#   applies_to: [V01]
+#   interpretation: "как этот пункт связан с наблюдаемым на видео действием"
+
+[]

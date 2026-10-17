@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Кассовый контроль</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231f6f68'/%3E%3Crect x='7' y='10' width='13' height='12' rx='2.5' fill='none' stroke='white' stroke-width='2'/%3E%3Cpath d='M20 14.5 25 11.5v9l-5-3' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Кассовый контроль</h1>
+      <p class="muted">Анализ видео работы кассира</p>
+    </div>
+    <button id="key-button" class="button ghost" type="button"><span id="key-dot" class="dot"></span>API-ключ</button>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <label id="dropzone" class="dropzone">
+        <input id="file-input" type="file" accept=".mov,video/quicktime" hidden>
+        <strong>Перетащите видео сюда</strong>
+        <span class="muted">или нажмите, чтобы выбрать файл · формат .mov</span>
+      </label>
+
+      <div id="player" hidden>
+        <video id="video" controls playsinline preload="metadata"></video>
+        <div id="timeline" class="timeline"><div id="progress" class="progress"></div></div>
+        <div class="file-bar">
+          <span id="file-name" class="file-name"></span>
+          <button id="change-button" class="button ghost" type="button">Другое видео</button>
+          <button id="analyze-button" class="button primary" type="button">Анализировать</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel results">
+      <div class="results-head">
+        <h2>Результат</h2>
+        <span id="status" class="pill">Ожидание</span>
+      </div>
+      <div id="results-body"></div>
+    </aside>
+  </main>
+
+  <footer class="muted">Результат — подсказка проверяющему, а не юридическое заключение.</footer>
+
+  <dialog id="key-dialog">
+    <form method="dialog">
+      <h3>API-ключ</h3>
+      <input id="key-input" type="password" autocomplete="off" placeholder="Значение заголовка X-API-Key">
+      <div class="dialog-actions">
+        <button class="button ghost" value="cancel">Отмена</button>
+        <button class="button primary" value="save">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="frame-dialog" class="frame-dialog">
+    <form method="dialog">
+      <img id="frame-image" alt="Кадр-доказательство">
+      <div class="dialog-actions">
+        <span id="frame-caption" class="muted"></span>
+        <button class="button ghost">Закрыть</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
