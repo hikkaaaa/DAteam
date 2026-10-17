@@ -62,7 +62,7 @@ def main() -> None:
 
     for video_name, expected in labels.items():
         started = time.perf_counter()
-        violations = analyze_video(args.videos / video_name)
+        violations, _ = analyze_video(args.videos / video_name)
         times.append(time.perf_counter() - started)
 
         predicted = [{"type": type_id_by_name.get(v.type), "timecode_sec": v.timecode_sec} for v in violations]

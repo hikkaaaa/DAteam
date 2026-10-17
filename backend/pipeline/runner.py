@@ -1,4 +1,4 @@
-"""Video file -> list of violations for the API (pipeline from CLAUDE.md)."""
+"""Video file -> violations for the API + optional details for the UI (pipeline from CLAUDE.md)."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -12,9 +12,16 @@ from schemas import EvidenceFrame, Violation
 
 
 def analyze_video(video_path: Path, start_sec: float | None = None, end_sec: float | None = None,
-                  on_progress: Callable[[float], None] = lambda p: None) -> list[Violation]:
+                  on_progress: Callable[[float, str], None] = lambda p, stage: None,
+                  ) -> tuple[list[Violation], list[dict]]:
     """Analyze the whole video, or only [start_sec, end_sec] if given.
-    `on_progress(0..1)` is called as frames are processed (for the UI's percentage)."""
+
+    Returns (violations, details):
+      violations — exactly the ТЗ format;
+      details    — one dict per violation (same order) with UI-only extras: confidence, interval,
+                   the norm with its verbatim quote. Served by the optional /details endpoint.
+    `on_progress(0..1, stage)` drives the UI's step-by-step progress: detect -> rules -> report.
+    """
     seg_start = start_sec or 0.0
     seg_end = min(end_sec or float("inf"), duration_sec(video_path)) or 1.0
     types, norms = load_active_rules()
@@ -25,16 +32,19 @@ def analyze_video(video_path: Path, start_sec: float | None = None, end_sec: flo
     for frame in iter_frames(video_path, CONFIG["video"]["sample_fps"], CONFIG["video"]["max_side_px"],
                              start_sec, end_sec):
         states.append(build_scene_state(frame.timestamp_sec, detector.detect(frame)))
-        on_progress(0.9 * min(1.0, (frame.timestamp_sec - seg_start) / max(seg_end - seg_start, 1e-6)))
+        on_progress(0.85 * min(1.0, (frame.timestamp_sec - seg_start) / max(seg_end - seg_start, 1e-6)), "detect")
 
     # 4–6. Candidate events -> VLM check -> merge + confidence filter.
+    on_progress(0.85, "rules")
     candidates = find_events(states, set(types))
     verified = [e for e in candidates
                 if verifier.confirms(video_path, e.start_sec, e.end_sec, types[e.type_id].visual_criterion)]
 
     # 7. Description from facts + norms.yaml, 1–3 evidence frames.
-    violations = []
-    for event in merge_events(verified):
+    on_progress(0.9, "report")
+    events = merge_events(verified)
+    violations, details = [], []
+    for i, event in enumerate(events):
         vtype = types[event.type_id]
         norm = norms[vtype.rule_id]
         frames = read_frames_at(video_path, evidence_times(event))
@@ -46,4 +56,11 @@ def analyze_video(video_path: Path, start_sec: float | None = None, end_sec: flo
                                            image_base64=encode_jpeg(f.image, CONFIG["postprocess"]["evidence_jpeg_quality"]))
                              for f in frames],
         ))
-    return violations
+        details.append({
+            "confidence": round(event.confidence, 3),
+            "start_sec": round(event.start_sec, 2),
+            "end_sec": round(event.end_sec, 2),
+            "rule": norm.model_dump(),  # document, clause, verbatim quote, url, ...
+        })
+        on_progress(0.9 + 0.1 * (i + 1) / len(events), "report")
+    return violations, details

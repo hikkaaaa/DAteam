@@ -6,27 +6,43 @@
   <title>Кассовый контроль</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231f6f68'/%3E%3Crect x='7' y='10' width='13' height='12' rx='2.5' fill='none' stroke='white' stroke-width='2'/%3E%3Cpath d='M20 14.5 25 11.5v9l-5-3' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem("theme") || ""; } catch {}</script>
 </head>
 <body>
+  <!-- Left navigation rail: icons only, expands with labels on hover -->
+  <nav class="rail" aria-label="Навигация">
+    <span class="brand-mark rail-logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg>
+    </span>
+    <button class="rail-item tab active" type="button" data-view="analyzer-view" title="Анализатор видео">
+      <i data-icon="video" class="c-teal"></i><span class="label">Анализатор видео</span>
+    </button>
+    <button class="rail-item tab" type="button" data-view="norms-view" title="Нормативная база РК">
+      <i data-icon="book" class="c-violet"></i><span class="label">Нормативная база РК</span>
+    </button>
+    <span class="rail-divider"></span>
+    <button id="history-button" class="rail-item" type="button" title="История">
+      <i data-icon="history" class="c-sky"></i><span class="label">История</span><span id="history-count" class="count"></span>
+    </button>
+  </nav>
+
   <header class="topbar">
     <div class="brand">
       <!-- Official ForteBank logo: put it at frontend/assets/forte-logo.svg (hidden until the file exists) -->
-      <img class="brand-logo" src="assets/forte-logo.svg" alt="ForteBank" onerror="this.remove()">
-      <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 9.5 4-1.2 7-5.1 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg>
-      </span>
+      <img class="brand-logo" onerror="this.remove()">
       <div>
         <h1>Кассовый контроль</h1>
-        <p class="muted">ForteBank · анализ видео работы кассира</p>
+        <p class="muted">Анализ видео работы кассира</p>
       </div>
     </div>
     <div class="topbar-actions">
-      <button id="history-button" class="button ghost" type="button">История <span id="history-count" class="count"></span></button>
-      <button id="key-button" class="button ghost" type="button"><span id="key-dot" class="dot"></span>API-ключ</button>
+      <button id="theme-button" class="button ghost icon" type="button" title="Светлая / тёмная тема"><i id="theme-icon" data-icon="sun" class="c-amber"></i></button>
+      <button id="key-button" class="button ghost" type="button"><i data-icon="key" class="c-amber"></i>API-ключ<span id="key-dot" class="dot"></span></button>
     </div>
   </header>
 
-  <main class="layout">
+  <!-- ===== Tab 1: video analyzer ===== -->
+  <main id="analyzer-view" class="layout">
     <section class="panel upload">
       <label id="dropzone" class="dropzone">
         <input id="file-input" type="file" accept=".mov,video/quicktime" hidden>
@@ -37,22 +53,50 @@
         <span class="muted">или нажмите, чтобы выбрать файл · формат .mov</span>
         <!-- Sample videos live in frontend/assets/demo/ (git-ignored). Replace with real examples later. -->
         <span class="samples">
-          <button class="sample" type="button" data-src="assets/demo/sample-violation.mov" data-name="Пример — с нарушением.mov">🎬 Пример 1: с нарушением</button>
-          <button class="sample" type="button" data-src="assets/demo/sample-clean.mov" data-name="Пример — без нарушений.mov">🎬 Пример 2: без нарушений</button>
+          <button class="sample" type="button" data-src="assets/demo/sample-violation.mov" data-name="Пример — с нарушением.mov"><i data-icon="film" class="c-rose"></i>Пример 1: с нарушением</button>
+          <button class="sample" type="button" data-src="assets/demo/sample-clean.mov" data-name="Пример — без нарушений.mov"><i data-icon="film" class="c-emerald"></i>Пример 2: без нарушений</button>
         </span>
       </label>
 
       <div id="player" hidden>
-        <button id="back-button" class="back" type="button">← Назад</button>
-        <video id="video" controls playsinline preload="metadata"></video>
+        <button id="back-button" class="back" type="button"><i data-icon="arrowLeft"></i>Назад</button>
+        <div class="video-wrap">
+          <video id="video" controls playsinline preload="metadata"></video>
+          <div id="roi-layer" class="roi-layer" hidden></div>
+        </div>
         <div id="timeline" class="timeline">
           <div id="progress" class="progress"></div>
           <div id="selection" class="selection" hidden></div>
+          <div id="hover-preview" class="hover-preview" hidden>
+            <canvas id="hover-canvas" width="160" height="90"></canvas>
+            <span id="hover-time"></span>
+          </div>
         </div>
         <div class="range-info">
           <span id="range-text" class="range-text"></span>
           <button id="range-clear" class="link" type="button" hidden>Сбросить</button>
         </div>
+
+        <!-- Audit player tools. Hotkeys: Space play/pause · ←/→ previous/next violation · , / . one frame -->
+        <div class="toolbar">
+          <div class="tool-group">
+            <button id="prev-violation" class="tool" type="button" title="Предыдущее нарушение (←)"><i data-icon="skipBack"></i></button>
+            <button id="frame-back" class="tool" type="button" title="Кадр назад (,)"><i data-icon="chevronLeft"></i>кадр</button>
+            <button id="play-toggle" class="tool" type="button" title="Пауза / воспроизведение (пробел)"><i id="play-icon" data-icon="play"></i></button>
+            <button id="frame-forward" class="tool" type="button" title="Кадр вперёд (.)">кадр<i data-icon="chevronRight"></i></button>
+            <button id="next-violation" class="tool" type="button" title="Следующее нарушение (→)"><i data-icon="skipForward"></i></button>
+          </div>
+          <div class="tool-group" id="speed-group">
+            <button class="tool speed" type="button" data-rate="0.5">0.5x</button>
+            <button class="tool speed active" type="button" data-rate="1">1x</button>
+            <button class="tool speed" type="button" data-rate="2">2x</button>
+          </div>
+          <label class="switch" title="Показать размеченные зоны из config.yaml (scene.zones)">
+            <input id="roi-toggle" type="checkbox"> <span>Зона кассы (ROI)</span>
+          </label>
+        </div>
+        <p id="roi-note" class="muted roi-note" hidden></p>
+
         <div class="file-bar">
           <span class="file-info">
             <span id="file-name" class="file-name"></span>
@@ -70,10 +114,28 @@
         <span id="status" class="pill">Ожидание</span>
       </div>
       <div id="results-body"></div>
+      <div id="results-foot" class="results-foot" hidden>
+        <button id="report-button" class="button primary wide" type="button"><i data-icon="fileDown"></i>Скачать PDF-отчёт</button>
+      </div>
     </aside>
   </main>
 
+  <!-- ===== Tab 2: normative base (rules/norms.yaml) ===== -->
+  <main id="norms-view" class="norms-view" hidden>
+    <div class="norms-head">
+      <div>
+        <h2>Нормативная база РК</h2>
+        <p class="muted">Пункты нормативных актов, на которые ссылается анализ. Источник — rules/norms.yaml.</p>
+      </div>
+      <input id="norms-search" class="search" type="search" placeholder="Поиск по документу, пункту или цитате">
+    </div>
+    <div id="norms-list" class="norms-list"></div>
+  </main>
+
   <footer class="muted">Результат — подсказка проверяющему, а не юридическое заключение.</footer>
+
+  <!-- Printable report: filled by report.js, visible only when printing / saving as PDF -->
+  <div id="report" class="report"></div>
 
   <dialog id="key-dialog">
     <form method="dialog">
@@ -107,6 +169,10 @@
     </form>
   </dialog>
 
+  <script src="icons.js"></script>
   <script src="app.js"></script>
+  <script src="player.js"></script>
+  <script src="norms.js"></script>
+  <script src="report.js"></script>
 </body>
 </html>

@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import CONFIG, ROOT, api_key, path
 from pipeline.runner import analyze_video
+from rules import load_norms
 from schemas import JobResponse
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,8 @@ logger = logging.getLogger(__name__)
 # ---------- Background jobs ----------
 # In-memory store: fine for one process. For several workers, move to Redis.
 jobs: dict[str, JobResponse] = {}
-progress: dict[str, float] = {}  # job_id -> 0..1, served by the optional /progress endpoint
+# UI-only extras per job (not in the ТЗ response): progress, current stage, per-violation details.
+extras: dict[str, dict] = {}
 jobs_lock = threading.Lock()
 executor: ThreadPoolExecutor | None = None
 
@@ -39,8 +41,10 @@ executor: ThreadPoolExecutor | None = None
 def run_job(job_id: str, video_path: Path, start_sec: float | None, end_sec: float | None) -> None:
     started = time.perf_counter()
     try:
-        violations = analyze_video(video_path, start_sec, end_sec,
-                                   on_progress=lambda p: progress.__setitem__(job_id, p))
+        violations, details = analyze_video(
+            video_path, start_sec, end_sec,
+            on_progress=lambda p, stage: extras[job_id].update(progress=p, stage=stage))
+        extras[job_id]["details"] = details
         elapsed = time.perf_counter() - started
         if elapsed > CONFIG["jobs"]["target_processing_sec"]:
             logger.warning("Job %s took %.1fs, over the time budget", job_id, elapsed)
@@ -55,7 +59,7 @@ def run_job(job_id: str, video_path: Path, start_sec: float | None, end_sec: flo
             video_path.unlink(missing_ok=True)
     with jobs_lock:
         jobs[job_id] = result
-        progress[job_id] = 1.0
+        extras[job_id].update(progress=1.0, stage="done")
 
 
 @asynccontextmanager
@@ -105,7 +109,7 @@ def analyze(file: UploadFile = File(...),
 
     with jobs_lock:
         jobs[job_id] = JobResponse(job_id=job_id, status="processing")
-        progress[job_id] = 0.0
+        extras[job_id] = {"progress": 0.0, "stage": "detect", "details": []}
     executor.submit(run_job, job_id, video_path, start_sec, end_sec)
     return {"job_id": job_id}
 
@@ -120,13 +124,38 @@ def get_job(job_id: str) -> JobResponse:
     return job
 
 
+# ---------- Optional endpoints for the UI (not in the ТЗ; the ТЗ endpoints above are unchanged) ----------
+
+def job_extras(job_id: str) -> dict:
+    with jobs_lock:
+        if job_id not in extras:
+            raise HTTPException(404, "Job not found")
+        return extras[job_id]
+
+
 @app.get("/api/v1/jobs/{job_id}/progress", dependencies=[Depends(require_api_key)])
 def get_progress(job_id: str) -> dict:
-    """Optional (not in the ТЗ): processing progress 0..1 for the UI's percentage."""
-    with jobs_lock:
-        if job_id not in progress:
-            raise HTTPException(404, "Job not found")
-        return {"progress": round(progress[job_id], 3)}
+    """{"progress": 0..1, "stage": detect | rules | report | done}"""
+    e = job_extras(job_id)
+    return {"progress": round(e["progress"], 3), "stage": e["stage"]}
+
+
+@app.get("/api/v1/jobs/{job_id}/details", dependencies=[Depends(require_api_key)])
+def get_details(job_id: str) -> dict:
+    """Per-violation extras in the same order as `violations`: confidence, interval, norm + quote."""
+    return {"violations": job_extras(job_id)["details"]}
+
+
+@app.get("/api/v1/norms", dependencies=[Depends(require_api_key)])
+def get_norms() -> list[dict]:
+    """Normative base from rules/norms.yaml (complete entries only) for the "Нормативная база РК" tab."""
+    return [norm.model_dump() for norm in load_norms().values()]
+
+
+@app.get("/api/v1/zones", dependencies=[Depends(require_api_key)])
+def get_zones() -> dict:
+    """Scene zones from config.yaml (normalized x1, y1, x2, y2; null = not marked yet) for the ROI overlay."""
+    return {name: box for name, box in CONFIG["scene"]["zones"].items() if box}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")

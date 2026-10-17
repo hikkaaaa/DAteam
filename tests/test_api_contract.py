@@ -69,7 +69,7 @@ def test_rejects_non_mov(client, tmp_path):
 
 def test_segment(client, mov_file, monkeypatch):
     seen = {}
-    monkeypatch.setattr("main.analyze_video", lambda path, start, end, **_: seen.update(start=start, end=end) or [])
+    monkeypatch.setattr("main.analyze_video", lambda path, start, end, **_: seen.update(start=start, end=end) or ([], []))
     with open(mov_file, "rb") as f:
         r = client.post("/api/v1/analyze", files={"file": (mov_file.name, f, "video/quicktime")},
                         data={"start_sec": "0.5", "end_sec": "1.5"}, headers=HEADERS)
@@ -80,6 +80,12 @@ def test_segment(client, mov_file, monkeypatch):
         bad = client.post("/api/v1/analyze", files={"file": (mov_file.name, f, "video/quicktime")},
                           data={"start_sec": "2", "end_sec": "1"}, headers=HEADERS)
     assert bad.status_code == 400
+
+
+def test_reference_endpoints(client):
+    assert client.get("/api/v1/norms").status_code == 401
+    assert isinstance(client.get("/api/v1/norms", headers=HEADERS).json(), list)
+    assert isinstance(client.get("/api/v1/zones", headers=HEADERS).json(), dict)
 
 
 def test_rejects_too_large(client, mov_file, monkeypatch):
@@ -106,7 +112,8 @@ def test_no_violation_flow(client, mov_file):
     assert body["violations"] == []
     assert set(body) == {"job_id", "status", "verdict", "violations"}  # exactly the ТЗ fields
     progress = client.get(f"/api/v1/jobs/{job_id}/progress", headers=HEADERS).json()
-    assert progress == {"progress": 1.0}
+    assert progress == {"progress": 1.0, "stage": "done"}
+    assert client.get(f"/api/v1/jobs/{job_id}/details", headers=HEADERS).json() == {"violations": []}
 
 
 def test_violation_shape(client, mov_file, monkeypatch, tmp_path):
@@ -122,12 +129,16 @@ def test_violation_shape(client, mov_file, monkeypatch, tmp_path):
         type="Тестовый тип", timecode_sec=1.5, description="Тест",
         evidence_frames=[EvidenceFrame(timestamp_sec=1.5, image_base64=jpeg_b64)],
     )]
-    monkeypatch.setattr("main.analyze_video", lambda *_, **__: fake)
+    monkeypatch.setattr("main.analyze_video", lambda *_, **__: (fake, [{"confidence": 0.9}]))
 
     body = wait_for_job(client, upload(client, mov_file).json()["job_id"])
     assert body["status"] == "done"
     assert body["verdict"] == "violation"
     assert len(body["violations"]) == 1
+    assert set(body) == {"job_id", "status", "verdict", "violations"}  # extras never leak into the ТЗ response
+    assert set(body["violations"][0]) == {"type", "timecode_sec", "description", "evidence_frames"}
+    details = client.get(f"/api/v1/jobs/{body['job_id']}/details", headers=HEADERS).json()
+    assert details == {"violations": [{"confidence": 0.9}]}
 
     violation = body["violations"][0]
     assert {"type", "timecode_sec", "description", "evidence_frames"} <= violation.keys()

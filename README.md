@@ -23,7 +23,8 @@ Docker + GPU: `docker compose up --build` · Tests: `pytest tests`
 backend/
   main.py              API (POST /api/v1/analyze, GET /api/v1/jobs/{id}), auth, job queue
                        analyze also takes optional start_sec / end_sec (segment; not in the ТЗ)
-                       GET /api/v1/jobs/{id}/progress -> {"progress": 0..1} (for the UI; not in the ТЗ)
+                       optional UI endpoints (not in the ТЗ; ТЗ response stays exact):
+                       /jobs/{id}/progress, /jobs/{id}/details, /norms, /zones
   schemas.py           response format fixed by the ТЗ
   rules.py             loads rules/*.yaml
   pipeline/
@@ -39,7 +40,12 @@ rules/
 scripts/
   download_weights.py  the only step that uses the network
   evaluate.py          jury metrics -> reports/
-frontend/              index.html, app.js, style.css
+frontend/              index.html, style.css
+  app.js               main flow: upload, progress, results, history
+  player.js            audit player: frame step, speed, episodes, hotkeys, ROI zones
+  norms.js             "Нормативная база РК" tab
+  report.js            PDF report (browser print → Save as PDF)
+  assets/demo/         sample videos for the demo buttons (git-ignored)
 config.yaml            every threshold and parameter
 weights/  data/        git-ignored
 ```
