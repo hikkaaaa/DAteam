@@ -1,0 +1,13 @@
+torch
+transformers>=4.57
+accelerate
+peft
+qwen-vl-utils
+opencv-python-headless
+pillow
+pyyaml
+scipy
+fastapi
+uvicorn
+python-multipart
+matplotlib
