@@ -12,9 +12,9 @@ let selectedCategoryId = null;
 
 function toRecord(entry) {
   const { id, file, addedAt, status, result, details, jobId, elapsedSec, analyzedAt, range, notes, categoryIds,
-          roi, roiOn, analyzedRoi } = entry;
+          roi, roiOn, analyzedRoi, feedback, missed, trainable } = entry;
   return { id, file, addedAt, status, result, details, jobId, elapsedSec, analyzedAt, range, notes, categoryIds,
-           roi, roiOn, analyzedRoi };
+           roi, roiOn, analyzedRoi, feedback, missed, trainable };
 }
 
 async function saveSession(entry) {

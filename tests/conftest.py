@@ -15,3 +15,4 @@ def isolated_uploads(tmp_path, monkeypatch):
     from config import CONFIG
 
     monkeypatch.setitem(CONFIG["storage"], "uploads_dir", str(tmp_path / "uploads"))
+    monkeypatch.setitem(CONFIG["storage"], "feedback_dir", str(tmp_path / "feedback"))

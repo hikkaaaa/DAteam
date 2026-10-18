@@ -19,9 +19,10 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.staticfiles import StaticFiles
 
+import feedback
 from config import CONFIG, ROOT, api_key, path
 from pipeline import remote
 from pipeline.remote import MLServerError
@@ -170,6 +171,26 @@ def get_progress(job_id: str) -> dict:
     e = job_extras(job_id)
     optional = {k: e.get(k) for k in ("title", "message", "error") if e.get(k)}
     return {"progress": round(e["progress"], 3), "stage": e["stage"], **optional}
+
+
+@app.post("/api/v1/feedback", dependencies=[Depends(require_api_key)])
+def post_feedback(fb: feedback.Feedback) -> dict:
+    """Reviewer's verdict on a finding (correct / incorrect) or a missed violation, with a comment."""
+    record = feedback.save(fb)
+    return {"id": record["id"], "saved": True}
+
+
+@app.get("/api/v1/feedback", dependencies=[Depends(require_api_key)])
+def get_feedback() -> dict:
+    """All current feedback + counts per violation type, for the "Обратная связь" page."""
+    return feedback.summary()
+
+
+@app.get("/api/v1/feedback/export", dependencies=[Depends(require_api_key)])
+def export_feedback() -> Response:
+    """Zip dataset for the ML team: feedback.jsonl, train.jsonl (trainable only), frames/, README.txt."""
+    return Response(feedback.export_zip(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="feedback-dataset.zip"'})
 
 
 @app.get("/api/v1/ml/health", dependencies=[Depends(require_api_key)])

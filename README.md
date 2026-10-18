@@ -30,7 +30,9 @@ backend/
                        analyze also takes optional start_sec / end_sec (segment) and roi (cash desk
                        zone drawn in the UI; the video is cropped to it) — not in the ТЗ
                        optional UI endpoints (not in the ТЗ; ТЗ response stays exact):
-                       /jobs/{id}/progress, /jobs/{id}/details, /norms, /ml/health
+                       /jobs/{id}/progress, /jobs/{id}/details, /norms, /ml/health,
+                       /feedback (POST a verdict, GET all), /feedback/export (zip dataset)
+  feedback.py          reviewer feedback -> storage/feedback/ (feedback.jsonl + frames/)
   schemas.py           response format fixed by the ТЗ
   rules.py             loads rules/*.yaml
   pipeline/
@@ -56,6 +58,7 @@ frontend/              index.html, style.css
   storage.js           IndexedDB: analyzed sessions + videos saved in this browser only
   icons.js             Lucide icons (inline, offline)
   report.js            PDF report (browser print → Save as PDF)
+  feedback.js          «Верно / Неверно / Модель пропустила» + "Обратная связь" page and dataset download
   assets/demo/         sample videos for the demo buttons (git-ignored)
 config.yaml            every threshold and parameter
 weights/  data/        git-ignored

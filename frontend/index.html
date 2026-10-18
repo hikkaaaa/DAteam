@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Кассовый контроль</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231f6f68'/%3E%3Crect x='7' y='10' width='13' height='12' rx='2.5' fill='none' stroke='white' stroke-width='2'/%3E%3Cpath d='M20 14.5 25 11.5v9l-5-3' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=11">
   <script>try { document.documentElement.dataset.theme = localStorage.getItem("theme") || ""; } catch {}</script>
 </head>
 <body>
@@ -25,6 +25,9 @@
     </button>
     <button class="rail-item tab" type="button" data-view="categories-view" title="Категории">
       <i data-icon="folder" class="c-rose"></i><span class="label">Категории</span>
+    </button>
+    <button class="rail-item tab" type="button" data-view="feedback-view" title="Обратная связь">
+      <i data-icon="messageSquare" class="c-emerald"></i><span class="label">Обратная связь</span>
     </button>
     <span class="rail-divider"></span>
     <button id="history-button" class="rail-item tab" type="button" data-view="history-view" title="История">
@@ -189,6 +192,19 @@
     <section id="category-feed" class="category-feed"></section>
   </main>
 
+  <!-- ===== Tab: feedback — reviewers' verdicts on the model's answers, dataset for re-training ===== -->
+  <main id="feedback-view" class="filters-view" hidden>
+    <div class="norms-head">
+      <div>
+        <h2>Обратная связь</h2>
+        <p class="muted">Отметки проверяющих «верно / неверно / пропущено».</p>
+      </div>
+      <button id="feedback-export" class="button primary" type="button"><i data-icon="download"></i>Скачать датасет отзывов</button>
+    </div>
+    <div id="feedback-stats" class="fb-stats"></div>
+    <div id="feedback-body"></div>
+  </main>
+
   <footer class="muted">
     <span id="footer-disclaimer">Результат — подсказка проверяющему, а не юридическое заключение.</span>
     <!-- Shown instead of the disclaimer on the "Нормативная база РК" page -->
@@ -229,6 +245,28 @@
     </form>
   </dialog>
 
+  <dialog id="feedback-dialog">
+    <form id="feedback-form" method="dialog">
+      <h3 id="fb-title"></h3>
+      <p id="fb-sub" class="muted"></p>
+      <div id="fb-missed-fields">
+        <label class="field">Тип нарушения
+          <input id="fb-type" list="fb-types" placeholder="Например, «Наличные оставлены без присмотра»" autocomplete="off">
+        </label>
+        <datalist id="fb-types"></datalist>
+        <label class="field">Таймкод <input id="fb-time" placeholder="0:44.2"></label>
+      </div>
+      <label class="field">Комментарий <textarea id="fb-comment" rows="3" placeholder="Что на самом деле видно на видео"></textarea></label>
+      <label class="check fb-trainable"><input id="fb-trainable" type="checkbox">
+        <span>Можно использовать для обучения модели</span></label>
+      <p id="fb-error" class="fb-error" hidden></p>
+      <div class="dialog-actions">
+        <button class="button ghost" value="cancel" formnovalidate>Отмена</button>
+        <button class="button primary" value="save">Отправить</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="category-dialog">
     <form id="category-form" method="dialog">
       <h3>Категории видео</h3>
@@ -260,13 +298,14 @@
     </form>
   </dialog>
 
-  <script src="icons.js?v=8"></script>
-  <script src="storage.js?v=8"></script>
-  <script src="app.js?v=8"></script>
-  <script src="player.js?v=8"></script>
-  <script src="norms.js?v=8"></script>
-  <script src="library.js?v=8"></script>
-  <script src="filters.js?v=8"></script>
-  <script src="report.js?v=8"></script>
+  <script src="icons.js?v=11"></script>
+  <script src="storage.js?v=11"></script>
+  <script src="app.js?v=11"></script>
+  <script src="player.js?v=11"></script>
+  <script src="norms.js?v=11"></script>
+  <script src="library.js?v=11"></script>
+  <script src="filters.js?v=11"></script>
+  <script src="report.js?v=11"></script>
+  <script src="feedback.js?v=11"></script>
 </body>
 </html>

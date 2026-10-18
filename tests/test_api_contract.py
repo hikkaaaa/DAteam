@@ -232,6 +232,38 @@ def test_ml_server_polling(tmp_path, monkeypatch):
     assert seen[1][2:] == ("Анализ кадров (Qwen)", "Анализ кадров: 8/12") and round(seen[1][0], 3) == 0.418
 
 
+def test_feedback(client):
+    """Reviewer feedback: saved, re-vote replaces, delete removes, counted per type, exported as a zip."""
+    import io
+    import zipfile
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(buffer, format="JPEG")
+    jpeg_b64 = base64.b64encode(buffer.getvalue()).decode()
+    base = {"kind": "finding", "type": "Тип A", "timecode_sec": 5.0, "file_name": "x.mov", "job_id": "j1"}
+
+    assert client.post("/api/v1/feedback", json={**base, "id": "s1:0", "verdict": "correct"}).status_code == 401
+    post = lambda body: client.post("/api/v1/feedback", json=body, headers=HEADERS)
+    assert post({**base, "id": "s1:0", "verdict": "correct", "frame_base64": jpeg_b64}).status_code == 200
+    assert post({**base, "id": "s1:0", "verdict": "incorrect", "comment": "это клиент", "frame_base64": jpeg_b64}).status_code == 200
+    assert post({**base, "id": "s1:1", "verdict": "correct", "type": "Тип B"}).status_code == 200
+    assert post({**base, "id": "s1:1", "verdict": "correct", "deleted": True}).status_code == 200
+    assert post({**base, "id": "s1:m", "kind": "missed", "verdict": "missed", "trainable": True}).status_code == 200
+    assert post({**base, "id": "s1:x", "verdict": "maybe"}).status_code == 422
+
+    s = client.get("/api/v1/feedback", headers=HEADERS).json()
+    assert (s["total"], s["correct"], s["incorrect"], s["missed"], s["trainable"]) == (2, 0, 1, 1, 1)
+    assert s["per_type"] == [{"type": "Тип A", "correct": 0, "incorrect": 1, "missed": 1}]
+    assert s["items"][1]["comment"] == "это клиент" and s["items"][1]["frame_base64"] == jpeg_b64
+
+    z = zipfile.ZipFile(io.BytesIO(client.get("/api/v1/feedback/export", headers=HEADERS).content))
+    assert {"README.txt", "feedback.jsonl", "train.jsonl"} <= set(z.namelist())
+    assert len(z.read("feedback.jsonl").decode().splitlines()) == 2
+    assert len(z.read("train.jsonl").decode().splitlines()) == 1
+    assert sum(n.startswith("frames/") for n in z.namelist()) == 1
+
+
 def test_rules_files_are_consistent():
     """rules/*.yaml parse, every type's norm exists, and only confirmed types can reach the API."""
     from rules import CONFIRMED, load_active_rules, load_norms, load_violation_types

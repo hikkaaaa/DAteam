@@ -8,6 +8,7 @@ server:
 storage:
   uploads_dir: storage/uploads
   delete_video_after_processing: true
+  feedback_dir: storage/feedback  # reviewer feedback: feedback.jsonl + frames/ (backend/feedback.py)
 
 jobs:
   # 1 = one video at a time on a single GPU. Raise only if VRAM allows.

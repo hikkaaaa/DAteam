@@ -280,7 +280,7 @@ function showWelcome() {
 function showResult(entry) {
   // Pair each ТЗ violation with its optional details (same order), then sort by time.
   violations = (entry.result.violations || [])
-    .map((v, i) => ({ ...v, extra: entry.details?.[i] || {} }))
+    .map((v, i) => ({ ...v, idx: i, extra: entry.details?.[i] || {} })) // idx: position in the ТЗ response (feedback.js)
     .sort((a, b) => a.timecode_sec - b.timecode_sec);
   const confidences = violations.map((v) => v.extra.confidence).filter((c) => c != null);
   const meta = [entry.elapsedSec != null && `Проанализировано за ${Math.max(1, Math.round(entry.elapsedSec))} с`,
@@ -304,6 +304,7 @@ function showResult(entry) {
     countUp(value, top, "%");
   }
   if (meta) verdict.append(el("p", { className: "verdict-meta", textContent: meta }));
+  verdict.append(renderMissedButton(entry)); // reviewer feedback (feedback.js)
 
   setStatus(violations.length ? `Найдено: ${violations.length}` : "Нарушений нет", violations.length ? "violation" : "clean");
   $("results-body").replaceChildren(verdict, renderCategoryBar(entry), ...violations.map(renderViolation), renderNotes(entry));
@@ -339,7 +340,8 @@ function renderViolation(v, i) {
                               onclick: (e) => e.stopPropagation() }, icon("external"))),
       el("button", { className: "link episode", type: "button",
                      onclick: (e) => { e.stopPropagation(); playEpisode(i); } }, icon("play"), "Смотреть эпизод")),
-    renderSummary(v, i)); // full card width, at the very end
+    renderSummary(v, i), // full card width, at the very end
+    renderFeedbackBar(current, v)); // was the model right? (feedback.js)
   return card;
 }
 
@@ -579,7 +581,7 @@ $("range-clear").onclick = () => { current.range = null; renderRange(); };
 
 // ---------- Tabs, theme, dialogs, wiring ----------
 
-const VIEWS = ["analyzer-view", "history-view", "norms-view", "filters-view", "categories-view"];
+const VIEWS = ["analyzer-view", "history-view", "norms-view", "filters-view", "categories-view", "feedback-view"];
 function showView(view) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === view));
   for (const id of VIEWS) $(id).hidden = id !== view;
@@ -592,6 +594,7 @@ function showView(view) {
   if (view === "norms-view") loadNorms();
   if (view === "filters-view") renderFilters();
   if (view === "categories-view") renderCategories();
+  if (view === "feedback-view") renderFeedbackPage();
 }
 document.querySelectorAll(".tab").forEach((tab) => tab.onclick = () => showView(tab.dataset.view));
 
