@@ -11,8 +11,10 @@ let selectedCategoryId = null;
 // ---------- Persistence ----------
 
 function toRecord(entry) {
-  const { id, file, addedAt, status, result, details, jobId, elapsedSec, analyzedAt, range, notes, categoryIds } = entry;
-  return { id, file, addedAt, status, result, details, jobId, elapsedSec, analyzedAt, range, notes, categoryIds };
+  const { id, file, addedAt, status, result, details, jobId, elapsedSec, analyzedAt, range, notes, categoryIds,
+          roi, roiOn, analyzedRoi } = entry;
+  return { id, file, addedAt, status, result, details, jobId, elapsedSec, analyzedAt, range, notes, categoryIds,
+           roi, roiOn, analyzedRoi };
 }
 
 async function saveSession(entry) {
@@ -346,6 +348,6 @@ function renderFeedItem(entry, q = "") {
           ev.rule && el("p", { className: "muted", title: ev.rule.document },
             icon("scale", "c-violet"), ` ${ev.rule.clause} · ${ev.rule.document_short || ev.rule.document}`),
           ev.frames.length > 0 && el("div", { className: "evidence" }, ...ev.frames.map((f) =>
-            el("img", { src: frameSrc(f), alt: "", title: fmt(f.timestamp_sec), onclick: () => openFrame(f) }))))))
+            el("img", { src: frameSrc(f), alt: "", title: fmt(f.timestamp_sec), onclick: () => openFrame(f, ev.frames) }))))))
       : [el("p", { className: "muted", textContent: "Нарушений не найдено, ручных отметок нет." })])));
 }

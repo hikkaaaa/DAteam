@@ -82,11 +82,24 @@ def test_segment(client, mov_file, monkeypatch):
     assert bad.status_code == 400
 
 
+def test_roi(client, mov_file, monkeypatch):
+    """Optional cash desk zone: validated, passed to the pipeline; the jury's request works without it."""
+    seen = {}
+    monkeypatch.setattr("main.analyze_video", lambda path, start, end, roi=None, **_: seen.update(roi=roi) or ([], []))
+    for roi, code in [("0.1,0.2,0.6,0.9", 200), ("0.6,0.2,0.1,0.9", 400), ("0,0,0.01,0.01", 400), ("a,b", 400)]:
+        with open(mov_file, "rb") as f:
+            r = client.post("/api/v1/analyze", files={"file": (mov_file.name, f, "video/quicktime")},
+                            data={"roi": roi}, headers=HEADERS)
+        assert r.status_code == code, roi
+        if code == 200:
+            wait_for_job(client, r.json()["job_id"])
+            assert seen["roi"] == (0.1, 0.2, 0.6, 0.9)
+
+
 def test_reference_endpoints(client):
     assert client.get("/api/v1/norms").status_code == 401
     base = client.get("/api/v1/norms", headers=HEADERS).json()
     assert {"updated_at", "documents", "norms", "violation_types"} <= base.keys()
-    assert isinstance(client.get("/api/v1/zones", headers=HEADERS).json(), dict)
 
 
 def test_rejects_too_large(client, mov_file, monkeypatch):
@@ -156,6 +169,67 @@ def test_failed_job(client, tmp_path):
     path.write_bytes(b"definitely not a video")
     body = wait_for_job(client, upload(client, path).json()["job_id"])
     assert body["status"] == "failed"
+
+
+def test_ml_server_response(client, mov_file, monkeypatch):
+    """ML server answer (ТЗ format) -> our API: segment offset, frames filled in, norm from norms.yaml."""
+    from pipeline import remote
+    from rules import load_violation_types
+
+    v04 = load_violation_types()["V04"]
+    monkeypatch.setenv("ML_URL", "http://ml.test")
+    sent = {}
+
+    def fake_ml(path, on_progress):  # what the ML server would receive: the segment, cropped to the zone
+        with av.open(str(path)) as c:
+            s = c.streams.video[0]
+            sent.update(size=(s.width, s.height), duration=float(c.duration / av.time_base))
+        return {"verdict": "violation", "violations": [
+            {"type": v04.type, "timecode_sec": 0.5, "description": "Тест", "evidence_frames": [], "confidence": 0.8}]}
+    monkeypatch.setattr(remote, "run_ml", fake_ml)
+    with open(mov_file, "rb") as f:
+        r = client.post("/api/v1/analyze", files={"file": (mov_file.name, f, "video/quicktime")},
+                        data={"start_sec": "1.0", "end_sec": "2.0", "roi": "0,0,0.5,0.5"}, headers=HEADERS)
+    body = wait_for_job(client, r.json()["job_id"])
+    assert sent["size"] == (32, 24) and 0.8 <= sent["duration"] <= 1.2
+    assert set(body) == {"job_id", "status", "verdict", "violations"}
+    v = body["violations"][0]
+    assert v["timecode_sec"] == 1.5 and len(v["evidence_frames"]) == 1
+    details = client.get(f"/api/v1/jobs/{body['job_id']}/details", headers=HEADERS).json()["violations"][0]
+    assert details["confidence"] == 0.8 and details["rule"]["id"] == v04.norms[0]
+
+    def down(path, on_progress):
+        raise remote.MLServerError("ML-сервер недоступен")
+    monkeypatch.setattr(remote, "run_ml", down)
+    body = wait_for_job(client, upload(client, mov_file).json()["job_id"])
+    assert body == {"job_id": body["job_id"], "status": "failed"}
+    assert client.get(f"/api/v1/jobs/{body['job_id']}/progress", headers=HEADERS).json()["error"] == "ML-сервер недоступен"
+
+
+def test_ml_server_polling(tmp_path, monkeypatch):
+    """POST /infer_async, then GET /progress until done: stages reach the UI, the result comes back."""
+    import httpx
+    from config import CONFIG
+    from pipeline import remote
+
+    monkeypatch.setenv("ML_URL", "http://ml.test")
+    monkeypatch.setitem(CONFIG["ml_server"], "poll_sec", 0)
+    answers = iter([
+        {"status": "queued"},
+        {"status": "processing", "stage": "checklist", "stage_title": "Анализ кадров (Qwen)", "percent": 44,
+         "message": "Анализ кадров: 8/12"},
+        {"status": "done", "result": {"verdict": "no_violation", "violations": []}},
+    ])
+    request = httpx.Request("GET", "http://ml.test")
+    monkeypatch.setattr(remote.httpx, "post", lambda *a, **k: httpx.Response(200, json={"ml_job_id": "j1"}, request=request))
+    monkeypatch.setattr(remote.httpx, "get", lambda *a, **k: httpx.Response(200, json=next(answers), request=request))
+    video = tmp_path / "v.mov"
+    video.write_bytes(b"x")
+    seen = []
+    result = remote.run_ml(video, lambda *args: seen.append(args))
+    assert result == {"verdict": "no_violation", "violations": []}
+    assert [s[1] for s in seen] == ["queued", "checklist"]
+    assert seen[1][2:] == ("Анализ кадров (Qwen)", "Анализ кадров: 8/12") and round(seen[1][0], 3) == 0.418
 
 
 def test_rules_files_are_consistent():

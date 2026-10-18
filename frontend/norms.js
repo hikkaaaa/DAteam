@@ -60,8 +60,21 @@ function renderNorms() {
     : [normsState("Ничего не найдено", "Попробуйте другой запрос: номер пункта, слово из цитаты или тип нарушения.")]));
 }
 
+// From a violation's "Правило": open this page and bring the norm into view, highlighted.
+async function goToNorm(id) {
+  $("norms-search").value = ""; // a search filter could hide it
+  showView("norms-view");
+  await loadNorms();
+  const card = $(`norm-${id}`);
+  if (!card) return;
+  card.scrollIntoView({ block: "center", behavior: "smooth" });
+  card.classList.remove("spotlight");
+  void card.offsetWidth;
+  card.classList.add("spotlight");
+}
+
 function renderNorm(n) {
-  return el("article", { className: "norm" },
+  return el("article", { className: "norm", id: `norm-${n.id}` },
     el("div", { className: "norm-top" },
       el("strong", { className: "norm-clause", textContent: n.clause }),
       el("span", { className: "pill", textContent: n.id })),

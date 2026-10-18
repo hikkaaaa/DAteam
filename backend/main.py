@@ -23,6 +23,8 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.staticfiles import StaticFiles
 
 from config import CONFIG, ROOT, api_key, path
+from pipeline import remote
+from pipeline.remote import MLServerError
 from pipeline.runner import analyze_video
 from rules import load_documents, load_norms, load_norms_file, load_violation_types
 from schemas import JobResponse
@@ -38,12 +40,14 @@ jobs_lock = threading.Lock()
 executor: ThreadPoolExecutor | None = None
 
 
-def run_job(job_id: str, video_path: Path, start_sec: float | None, end_sec: float | None) -> None:
+def run_job(job_id: str, video_path: Path, start_sec: float | None, end_sec: float | None,
+            roi: tuple[float, float, float, float] | None = None) -> None:
     started = time.perf_counter()
     try:
         violations, details = analyze_video(
-            video_path, start_sec, end_sec,
-            on_progress=lambda p, stage: extras[job_id].update(progress=p, stage=stage))
+            video_path, start_sec, end_sec, roi=roi,
+            on_progress=lambda p, stage, title=None, message=None:
+                extras[job_id].update(progress=p, stage=stage, title=title, message=message))
         extras[job_id]["details"] = details
         elapsed = time.perf_counter() - started
         if elapsed > CONFIG["jobs"]["target_processing_sec"]:
@@ -51,15 +55,16 @@ def run_job(job_id: str, video_path: Path, start_sec: float | None, end_sec: flo
         result = JobResponse(job_id=job_id, status="done",
                              verdict="violation" if violations else "no_violation",
                              violations=violations)
-    except Exception:
+    except Exception as e:
         logger.exception("Job %s failed", job_id)
         result = JobResponse(job_id=job_id, status="failed")
+        extras[job_id]["error"] = str(e) if isinstance(e, MLServerError) else "Не удалось обработать видео"
     finally:
         if CONFIG["storage"]["delete_video_after_processing"]:
             video_path.unlink(missing_ok=True)
     with jobs_lock:
         jobs[job_id] = result
-        extras[job_id].update(progress=1.0, stage="done")
+        extras[job_id].update(progress=1.0, stage="done", title=None, message=None)
 
 
 @asynccontextmanager
@@ -73,6 +78,15 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Cash Discipline Video Analyzer", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def no_stale_frontend(request, call_next):
+    """UI files: the browser re-checks them on every load (cheap 304), so an update never mixes old and new JS."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 # ---------- Routes ----------
@@ -89,11 +103,15 @@ def health() -> dict:
 
 @app.post("/api/v1/analyze", dependencies=[Depends(require_api_key)])
 def analyze(file: UploadFile = File(...),
-            start_sec: float | None = Form(None), end_sec: float | None = Form(None)) -> dict:
-    """`start_sec` / `end_sec` are optional (not in the ТЗ): analyze only that segment of the video."""
+            start_sec: float | None = Form(None), end_sec: float | None = Form(None),
+            roi: str | None = Form(None)) -> dict:
+    """Optional fields (not in the ТЗ; the jury's request works without them):
+      start_sec / end_sec — analyze only that segment of the video;
+      roi — "x1,y1,x2,y2" in 0..1 of the frame: analyze only the cash desk zone drawn in the UI."""
     if (start_sec is not None and start_sec < 0) or \
             (start_sec is not None and end_sec is not None and end_sec <= start_sec):
         raise HTTPException(400, "Invalid segment: need 0 <= start_sec < end_sec")
+    zone = parse_roi(roi) if roi else None
     extension = Path(file.filename or "").suffix.lower()
     if extension not in CONFIG["server"]["allowed_extensions"]:
         raise HTTPException(415, f"Unsupported file type '{extension}'")
@@ -109,9 +127,20 @@ def analyze(file: UploadFile = File(...),
 
     with jobs_lock:
         jobs[job_id] = JobResponse(job_id=job_id, status="processing")
-        extras[job_id] = {"progress": 0.0, "stage": "detect", "details": []}
-    executor.submit(run_job, job_id, video_path, start_sec, end_sec)
+        extras[job_id] = {"progress": 1.0, "stage": "upload", "details": []}  # received, analysis not started yet
+    executor.submit(run_job, job_id, video_path, start_sec, end_sec, zone)
     return {"job_id": job_id}
+
+
+def parse_roi(roi: str) -> tuple[float, float, float, float]:
+    try:
+        x1, y1, x2, y2 = (float(v) for v in roi.split(","))
+    except ValueError:
+        raise HTTPException(400, "Invalid roi: need x1,y1,x2,y2")
+    min_side = CONFIG["roi"]["min_side"]
+    if not (0 <= x1 < x2 <= 1 and 0 <= y1 < y2 <= 1) or x2 - x1 < min_side or y2 - y1 < min_side:
+        raise HTTPException(400, f"Invalid roi: need 0 <= x1 < x2 <= 1, 0 <= y1 < y2 <= 1, sides >= {min_side}")
+    return x1, y1, x2, y2
 
 
 @app.get("/api/v1/jobs/{job_id}", response_model=JobResponse, response_model_exclude_none=True,
@@ -135,9 +164,18 @@ def job_extras(job_id: str) -> dict:
 
 @app.get("/api/v1/jobs/{job_id}/progress", dependencies=[Depends(require_api_key)])
 def get_progress(job_id: str) -> dict:
-    """{"progress": 0..1, "stage": detect | rules | report | done}"""
+    """{"progress": 0..1, "stage": ..., "title"?: stage text, "message"?: e.g. "Анализ кадров: 8/12", "error"?}
+    Stages: ML server — queued | frames | roles | checklist | detector | lora | rules | report | done;
+            local pipeline — detect | rules | report | done."""
     e = job_extras(job_id)
-    return {"progress": round(e["progress"], 3), "stage": e["stage"]}
+    optional = {k: e.get(k) for k in ("title", "message", "error") if e.get(k)}
+    return {"progress": round(e["progress"], 3), "stage": e["stage"], **optional}
+
+
+@app.get("/api/v1/ml/health", dependencies=[Depends(require_api_key)])
+def ml_health() -> dict:
+    """Is the ML server reachable: {"status": "ok" | "offline" | "off" (ML_URL not set), ...}"""
+    return remote.health()
 
 
 @app.get("/api/v1/jobs/{job_id}/details", dependencies=[Depends(require_api_key)])
@@ -158,12 +196,6 @@ def get_norms() -> dict:
                   for n in load_norms().values()],
         "violation_types": [{"id": t.id, "type": t.type, "norms": t.norms, "status": t.status} for t in types.values()],
     }
-
-
-@app.get("/api/v1/zones", dependencies=[Depends(require_api_key)])
-def get_zones() -> dict:
-    """Scene zones from config.yaml (normalized x1, y1, x2, y2; null = not marked yet) for the ROI overlay."""
-    return {name: box for name, box in CONFIG["scene"]["zones"].items() if box}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")

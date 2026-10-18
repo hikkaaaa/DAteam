@@ -45,18 +45,36 @@ function upload(form, onProgress) {
 }
 
 // Stages shown in the step-by-step progress. "upload" happens in the browser, the rest come from
-// GET /jobs/{id}/progress (see backend/pipeline/runner.py).
-const STEPS = [ // [stage, icon, color, label]
+// GET /jobs/{id}/progress. Two sets: the ML server's real stages (backend/pipeline/remote.py)
+// and the local pipeline / ?demo stages (backend/pipeline/runner.py).
+const ML_STEPS = [ // [stage, icon, color, label]
+  ["upload", "upload", "c-sky", "Загрузка видео"],
+  ["frames", "film", "c-sky", "Нарезка кадров"],
+  ["roles", "users", "c-teal", "Определение ролей в кадре"],
+  ["checklist", "eye", "c-amber", "Анализ кадров (Qwen)"],
+  ["detector", "box", "c-amber", "Детекция предметов"],
+  ["lora", "sparkles", "c-violet", "Проверка дообученной моделью"],
+  ["rules", "scale", "c-violet", "Сопоставление с нормами РК"],
+  ["report", "clipboardCheck", "c-emerald", "Вердикт и кадры-доказательства"],
+];
+const LOCAL_STEPS = [
   ["upload", "upload", "c-sky", "Загрузка и нарезка кадров"],
   ["detect", "scan", "c-amber", "Детекция действий и объектов кассира"],
   ["rules", "scale", "c-violet", "Проверка по нормативным актам РК"],
   ["report", "clipboardCheck", "c-emerald", "Формирование вердикта и кадров-доказательств"],
 ];
+const ML_ONLY = new Set(["queued", "frames", "roles", "checklist", "detector", "lora"]);
+let mlOnline = false; // set by checkMl(): pick the ML step list right from the upload
 
-function setProgress(entry, stage, pct) {
+// info: { title, message } from the ML server (current stage text, e.g. "Анализ кадров: 8/12")
+function setProgress(entry, stage, pct, info = {}) {
   // Upload is ~15% of the bar, server processing the remaining 85%.
-  const overall = stage === "upload" ? 0.15 * pct : 0.15 + 0.85 * pct;
-  entry.progress = { stage, overall };
+  // never moves backwards (e.g. the ML server's per-stage percent restarting)
+  const overall = Math.max(entry.progress?.overall || 0, stage === "upload" ? 0.15 * pct : 0.15 + 0.85 * pct);
+  if (ML_ONLY.has(stage)) entry.mlSteps = true;
+  if (stage === "detect") entry.mlSteps = false;
+  entry.progress = { stage, overall, ...info, ml: entry.mlSteps ?? (DEMO || mlOnline),
+                     startedAt: entry.progress?.startedAt ?? Date.now() };
   if (entry === current && entry.status === "processing") showProgress(entry.progress);
 }
 
@@ -68,29 +86,45 @@ async function analyze(entry) {
     form.append("start_sec", entry.range.start.toFixed(2));
     form.append("end_sec", entry.range.end.toFixed(2));
   }
+  if (entry.analyzedRoi) form.append("roi", entry.analyzedRoi.map((v) => v.toFixed(4)).join(",")); // optional: cash desk zone
   setProgress(entry, "upload", 0);
   const { job_id } = await upload(form, (p) => setProgress(entry, "upload", p));
   entry.jobId = job_id;
-  setProgress(entry, "detect", 0);
+  setProgress(entry, "upload", 1);
   for (;; await new Promise((r) => setTimeout(r, 1000))) {
     const job = await api(`/jobs/${job_id}`);
-    if (job.status === "failed") throw new Error("Не удалось обработать видео");
+    if (job.status === "failed") {
+      const { error } = await api(`/jobs/${job_id}/progress`).catch(() => ({}));
+      throw new Error(error || "Не удалось обработать видео");
+    }
     if (job.status === "done") {
       const details = await api(`/jobs/${job_id}/details`).then((d) => d.violations).catch(() => []);
       return { result: job, details };
     }
-    const { progress, stage } = await api(`/jobs/${job_id}/progress`);
-    setProgress(entry, stage, progress);
+    const { progress, stage, title, message } = await api(`/jobs/${job_id}/progress`);
+    setProgress(entry, stage, progress, { title, message });
   }
 }
 
 // ?demo: fake but realistic result, frames captured from the selected video in the browser.
 async function demoResult(entry) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  entry.mlSteps = true; // same stages as the real ML server
   for (let p = 0; p <= 1; p += 0.25) { setProgress(entry, "upload", p); await wait(150); }
-  for (const [stage, from, to] of [["detect", 0, 0.85], ["rules", 0.85, 0.9], ["report", 0.9, 1]]) {
-    for (let p = from; p <= to; p += 0.05) { setProgress(entry, stage, p); await wait(60); }
+  setProgress(entry, "queued", 0, { title: "В очереди на ML-сервере", message: "Сервер обрабатывает другое видео" });
+  await wait(1200);
+  const stages = [["frames", 4], ["roles", 3], ["checklist", 12], ["detector", 4], ["lora", 4], ["rules", 2]];
+  const total = stages.reduce((n, [, k]) => n + k, 0);
+  let done = 0;
+  for (const [stage, count] of stages) {
+    const [, , , title] = ML_STEPS.find(([key]) => key === stage);
+    for (let k = 1; k <= count; k++, done++) {
+      setProgress(entry, stage, 0.95 * done / total, { title, message: `${title}: ${k}/${count}` });
+      await wait(350);
+    }
   }
+  setProgress(entry, "report", 0.96, { title: "Вердикт и кадры-доказательства" });
+  await wait(500);
   const { start, end } = entry.range || { start: 0, end: video.duration || 60 };
   const at = (k) => +(start + (end - start) * k).toFixed(1);
   // Real violation types and norms (rules/*.yaml) when the base is reachable, placeholders otherwise.
@@ -149,20 +183,84 @@ function showState(title, text) {
     el("p", { textContent: title }), el("p", { textContent: text })));
 }
 
-function showProgress({ stage, overall }) {
+// Built once per analysis, then updated in place so the bar, the number and the steps animate
+// smoothly from one stage to the next (instead of re-rendering on every poll).
+function showProgress(progress) {
   $("results-foot").hidden = true;
-  const active = STEPS.findIndex(([key]) => key === stage);
-  const percent = Math.round(overall * 100);
-  $("results-body").replaceChildren(el("div", { className: "state progress-state" },
-    el("p", { textContent: "Идёт анализ видео" }),
-    el("div", { className: "percent", textContent: `${percent}%` }),
-    el("div", { className: "bar" }, el("div", { style: `width: ${percent}%` })),
-    el("ol", { className: "stage-list" }, ...STEPS.map(([, name, color, label], i) =>
-      el("li", { className: i < active ? "done" : i === active ? "active" : "" },
-        el("span", { className: `stage-mark ${i < active ? "c-emerald" : color}` }, icon(i < active ? "check" : name)),
-        el("span", { textContent: label })))),
-    el("p", { className: "muted", textContent: "Обычно занимает до 3 минут" })));
+  const steps = progress.ml ? ML_STEPS : LOCAL_STEPS;
+  let view = $("results-body").querySelector(".progress-state");
+  if (!view || view.dataset.steps !== String(progress.ml)) view = buildProgress(steps, progress.ml);
+
+  const { stage, overall, title, message } = progress;
+  const queued = stage === "queued";
+  // queued = upload done, waiting for the ML server; an unknown stage keeps the last known one
+  let active = queued ? 1 : steps.findIndex(([key]) => key === stage);
+  if (active < 0) active = +(view.dataset.active || 0);
+  view.dataset.active = active;
+  view.querySelector(".bar div").style.width = `${overall * 100}%`;
+  tweenPercent(view.querySelector(".percent"), Math.round(overall * 100));
+  view.querySelectorAll(".stage-list li").forEach((li, i) => {
+    const state = i < active ? "done" : i === active && !queued ? "active" : "";
+    if (li.dataset.state === state) return;
+    li.dataset.state = state;
+    li.className = state;
+    const [, name, color, label] = steps[i];
+    li.querySelector(".stage-mark").className = `stage-mark ${state === "done" ? "c-emerald" : color}`;
+    li.querySelector(".stage-mark").replaceChildren(icon(state === "done" ? "check" : name));
+    li.querySelector(".stage-label").textContent = label;
+  });
+  // ML server's own text for the current stage, e.g. "Анализ кадров (Qwen)"
+  if (title && !queued && steps[active]) view.querySelectorAll(".stage-label")[active].textContent = title;
+  setLine(view.querySelector(".progress-message"), queued ? [icon("clock", "c-amber"), title || "В очереди"] : null,
+          message || (queued ? "" : "Обычно занимает до 3 минут"));
 }
+
+function buildProgress(steps, ml) {
+  const view = el("div", { className: "state progress-state" },
+    el("p", { textContent: "Идёт анализ видео" }),
+    el("div", { className: "percent", textContent: "0%" }),
+    el("div", { className: "bar" }, el("div", { style: "width: 0%" })),
+    el("p", { className: "progress-message muted" }),
+    el("ol", { className: "stage-list" }, ...steps.map(([, name, color, label]) =>
+      el("li", {}, el("span", { className: `stage-mark ${color}` }, icon(name)), el("span", { className: "stage-label", textContent: label })))),
+    el("p", { className: "progress-elapsed muted" }));
+  view.dataset.steps = String(ml);
+  $("results-body").replaceChildren(view);
+  return view;
+}
+
+// Message under the bar: fades when its text changes.
+function setLine(node, lead, text) {
+  const key = `${lead ? lead[1] : ""}|${text}`;
+  if (node.dataset.key === key) return;
+  node.dataset.key = key;
+  node.replaceChildren(...(lead ? [el("strong", {}, ...lead), lead[1] && text ? " · " : ""] : []), text);
+  node.classList.remove("swap");
+  void node.offsetWidth; // restart the animation
+  node.classList.add("swap");
+}
+
+// Percent number glides to the new value instead of jumping.
+function tweenPercent(node, to) {
+  const from = parseInt(node.textContent) || 0;
+  cancelAnimationFrame(node._raf);
+  if (from === to) return;
+  const started = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - started) / 600);
+    node.textContent = `${Math.round(from + (to - from) * (1 - (1 - k) ** 3))}%`;
+    if (k < 1) node._raf = requestAnimationFrame(step);
+  };
+  node._raf = requestAnimationFrame(step);
+}
+
+// "Прошло 0:15" under the steps, ticking every second while the analysis runs.
+setInterval(() => {
+  const node = $("results-body").querySelector(".progress-elapsed");
+  if (!node || current?.status !== "processing" || !current.progress) return;
+  const s = Math.floor((Date.now() - current.progress.startedAt) / 1000);
+  node.textContent = `Прошло ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}, 1000);
 
 function showWelcome() {
   $("results-foot").hidden = true;
@@ -186,6 +284,7 @@ function showResult(entry) {
     .sort((a, b) => a.timecode_sec - b.timecode_sec);
   const confidences = violations.map((v) => v.extra.confidence).filter((c) => c != null);
   const meta = [entry.elapsedSec != null && `Проанализировано за ${Math.max(1, Math.round(entry.elapsedSec))} с`,
+                entry.analyzedRoi && "только зона кассы",
                 entry.jobId && `Задача ${entry.jobId}`].filter(Boolean).join(" · ");
 
   const count = el("span", { textContent: "0" });
@@ -221,7 +320,7 @@ function renderViolation(v, i) {
   const card = el("article", { className: "violation fade-in", style: `animation-delay: ${120 + i * 70}ms`,
                                onclick: () => select(i) },
     frames[0] ? el("img", { className: "thumb", src: frameSrc(frames[0]), alt: "",
-                            onclick: (e) => { e.stopPropagation(); openFrame(frames[0]); } })
+                            onclick: (e) => { e.stopPropagation(); openFrame(frames[0], frames); } })
               : el("div", { className: "thumb" }),
     el("div", { className: "violation-body" },
       el("div", { className: "violation-top" },
@@ -231,7 +330,7 @@ function renderViolation(v, i) {
       el("p", { textContent: v.description }),
       frames.length > 1 && el("div", { className: "evidence" }, ...frames.map((f) => el("img", {
         src: frameSrc(f), alt: `Кадр ${fmt(f.timestamp_sec)}`, title: fmt(f.timestamp_sec),
-        onclick: (e) => { e.stopPropagation(); openFrame(f); } }))),
+        onclick: (e) => { e.stopPropagation(); openFrame(f, frames); } }))),
       rule && el("div", { className: "law" },
         el("span", { className: "law-title", title: rule.document }, icon("scale", "c-violet"),
           `${rule.clause} · ${rule.document_short || rule.document}`),
@@ -239,9 +338,51 @@ function renderViolation(v, i) {
         rule.url && el("a", { href: rule.url, target: "_blank", rel: "noopener", textContent: "Открыть источник ",
                               onclick: (e) => e.stopPropagation() }, icon("external"))),
       el("button", { className: "link episode", type: "button",
-                     onclick: (e) => { e.stopPropagation(); playEpisode(i); } }, icon("play"), "Смотреть эпизод")));
+                     onclick: (e) => { e.stopPropagation(); playEpisode(i); } }, icon("play"), "Смотреть эпизод")),
+    renderSummary(v, i)); // full card width, at the very end
   return card;
 }
+
+// "Кратко": the same violation as big bullet points that slide in one after another.
+function renderSummary(v, i) {
+  // Description = observed facts, then "Это может указывать на …", then the norm: take the parts apart.
+  const sentences = (v.description || "").split(/(?<=[.;])\s+(?=[А-ЯЁA-Z])/);
+  const what = sentences[0]?.replace(/[.;]$/, "");
+  const why = v.description?.match(/может указывать на ([^.;]+)/)?.[1];
+  const rule = v.extra.rule;
+  const { start_sec: from, end_sec: to, confidence } = v.extra;
+  const frames = v.evidence_frames?.length || 0;
+  const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one
+    : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
+  const rows = [ // [icon, color, label, text, action on click]
+    ["alert", "c-rose", "Что произошло", what],
+    ["eye", "c-amber", "Почему это важно", why && `Может указывать на ${why}`],
+    ["scale", "c-violet", "Правило", rule && `${rule.clause.split(" (")[0]} · ${rule.document_short || rule.document}`,
+     rule?.id && (() => goToNorm(rule.id))],
+    ["clock", "c-sky", "Таймкод", fmt(v.timecode_sec) + (from != null && to != null ? `  ·  эпизод ${fmt(from)}–${fmt(to)}` : ""),
+     () => playEpisode(i)],
+    ["film", "c-teal", "Доказательства", frames && `${frames} ${plural(frames, "кадр", "кадра", "кадров")} из видео`,
+     () => openFrame(v.evidence_frames[0], v.evidence_frames)],
+    ["sparkles", "c-emerald", "Уверенность AI", confidence != null && `${Math.round(confidence * 100)}%`],
+  ].filter(([, , , text]) => text);
+  const block = el("div", { className: "summary" },
+    el("p", { className: "summary-title", textContent: "Кратко" }),
+    el("ul", {}, ...rows.map(([name, color, label, text, action], j) =>
+      el("li", { style: `animation-delay: ${j * 110}ms`, className: action ? "clickable" : "",
+                 onclick: action && ((e) => { e.stopPropagation(); action(); }) },
+        el("span", { className: `summary-mark ${color}` }, icon(name)),
+        el("span", {}, el("span", { className: "summary-label", textContent: label }),
+                       el("strong", { textContent: text })),
+        action && el("span", { className: "summary-go" }, icon("chevronRight"))))));
+  // the bullets slide in when the block scrolls into view
+  summaryObserver.observe(block);
+  return block;
+}
+const summaryObserver = new IntersectionObserver((seen) => seen.forEach(({ isIntersecting, target }) => {
+  if (!isIntersecting) return;
+  target.classList.add("in");
+  summaryObserver.unobserve(target);
+}), { threshold: 0.25 });
 
 function renderMarkers() {
   document.querySelectorAll(".marker").forEach((m) => m.remove());
@@ -260,11 +401,37 @@ function renderMarkers() {
     })));
 }
 
-function openFrame(frame) {
-  $("frame-image").src = frameSrc(frame);
-  $("frame-caption").textContent = `Кадр на ${fmt(frame.timestamp_sec)}`;
+// Evidence slideshow: all frames of a violation, arrows / ← → / thumbnails switch between them.
+let slides = [], slide = 0;
+function openFrame(frame, frames = [frame]) {
+  slides = frames;
+  $("frame-thumbs").replaceChildren(...(frames.length > 1 ? frames.map((f, i) =>
+    el("button", { type: "button", className: "slide-thumb", title: fmt(f.timestamp_sec), onclick: () => showSlide(i) },
+      el("img", { src: frameSrc(f), alt: "" }))) : []));
+  showSlide(Math.max(0, frames.indexOf(frame)), 0);
   $("frame-dialog").showModal();
 }
+
+function showSlide(i, dir = Math.sign(i - slide)) {
+  slide = (i + slides.length) % slides.length;
+  const frame = slides[slide], img = $("frame-image");
+  img.src = frameSrc(frame);
+  img.classList.remove("from-left", "from-right");
+  void img.offsetWidth; // restart the slide animation
+  if (dir) img.classList.add(dir > 0 ? "from-right" : "from-left");
+  const many = slides.length > 1;
+  $("frame-prev").hidden = $("frame-next").hidden = !many;
+  $("frame-caption").textContent = `${many ? `Кадр ${slide + 1} из ${slides.length} · ` : "Кадр на "}${fmt(frame.timestamp_sec)}`;
+  document.querySelectorAll(".slide-thumb").forEach((t, j) => t.classList.toggle("active", j === slide));
+}
+$("frame-prev").onclick = () => showSlide(slide - 1, -1);
+$("frame-next").onclick = () => showSlide(slide + 1, 1);
+$("frame-dialog").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  e.preventDefault();
+  e.stopPropagation(); // the player's ← / → hotkeys jump between violations
+  if (slides.length > 1) showSlide(slide + (e.key === "ArrowRight" ? 1 : -1), e.key === "ArrowRight" ? 1 : -1);
+});
 
 let selected = -1;
 function select(i) {
@@ -317,11 +484,12 @@ function render(entry) {
   setStatus(label, kind);
   $("analyze-button").disabled = entry.status === "processing";
   if (entry.status === "ready") showState("Видео загружено", "Нажмите «Анализировать», чтобы найти признаки возможных нарушений.");
-  if (entry.status === "processing") showProgress(entry.progress || { stage: "upload", overall: 0 });
+  if (entry.status === "processing") showProgress(entry.progress || { stage: "upload", overall: 0, ml: DEMO || mlOnline });
   if (entry.status === "failed") showState(entry.error.title, entry.error.text);
   if (entry.status === "done") showResult(entry);
   else renderMarkers();
   renderRange();
+  updateRoi();
   renderHistory();
 }
 
@@ -329,6 +497,9 @@ async function start() {
   if (!getKey() && !DEMO) return $("key-dialog").showModal();
   const entry = current;
   entry.status = "processing";
+  entry.progress = null; // a re-run starts its progress from zero
+  entry.analyzedRoi = entry.roiOn && entry.roi ? [...entry.roi] : null;
+  entry.mlSteps = undefined;
   render(entry);
   const started = performance.now();
   try {
@@ -353,6 +524,7 @@ function goHome() {
   video.load();
   renderMarkers();
   renderRange();
+  updateRoi();
   $("player").hidden = true;
   $("dropzone").hidden = false;
   $("file-input").value = "";
@@ -446,7 +618,20 @@ $("key-button").onclick = () => { $("key-input").value = getKey(); $("key-dialog
 $("key-dialog").onclose = () => {
   if ($("key-dialog").returnValue === "save") setKey($("key-input").value.trim());
   $("key-dot").classList.toggle("set", Boolean(getKey()));
+  checkMl();
 };
+
+// ML server indicator in the top bar (the models run on the team's GPU server).
+async function checkMl() {
+  if (DEMO || !getKey()) return;
+  const { status, busy } = await api("/ml/health").catch(() => ({ status: "offline" }));
+  $("ml-status").hidden = status === "off";
+  const ok = status === "ok";
+  mlOnline = ok;
+  $("ml-status").querySelector(".dot").className = `dot ${ok ? "set" : "down"}`;
+  $("ml-status-text").textContent = ok ? (busy ? "ML-сервер: занят" : "ML-сервер на связи") : "ML-сервер недоступен";
+}
+setInterval(checkMl, 30000);
 for (const type of ["dragenter", "dragover", "dragleave", "drop"]) {
   $("dropzone").addEventListener(type, (e) => {
     e.preventDefault();
@@ -473,6 +658,7 @@ video.addEventListener("seeked", () => {
 });
 
 $("key-dot").classList.toggle("set", Boolean(getKey()));
+checkMl();
 // Start once every script is loaded: restore the saved library, then draw the start screen.
 document.addEventListener("DOMContentLoaded", async () => {
   await loadLibrary();

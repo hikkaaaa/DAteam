@@ -3,8 +3,13 @@
 Local AI service that finds visible signs of possible cash-discipline violations in cashier videos.
 Requirements and constraints: [CLAUDE.md](CLAUDE.md).
 
-> **Status: skeleton.** The API, job queue, video decoding and UI work end-to-end; the ML models are
-> stubs, so every video returns `no_violation`. Search for `TODO(ml)` / `TODO(data)` to find every slot.
+> **Models run on the team's GPU server** (Qwen3-VL-8B + LoRA + detector, `ml_server` on port 8001).
+> The backend sends each video to `POST {ML_URL}/infer` (header `X-ML-Token`) and returns the answer
+> in the ТЗ format. Set `ML_URL` / `ML_TOKEN` in `.env`. Without `ML_URL` the local stub pipeline runs
+> (`TODO(ml)` in `pipeline/model.py`) and every video returns `no_violation`.
+>
+> For the jury, run this backend on the GPU server itself (`ML_URL=http://localhost:8001`) and expose only
+> port 8000 through the tunnel, so videos never leave the server on their way to the models.
 
 ## Run
 
@@ -22,16 +27,18 @@ Docker + GPU: `docker compose up --build` · Tests: `pytest tests`
 ```
 backend/
   main.py              API (POST /api/v1/analyze, GET /api/v1/jobs/{id}), auth, job queue
-                       analyze also takes optional start_sec / end_sec (segment; not in the ТЗ)
+                       analyze also takes optional start_sec / end_sec (segment) and roi (cash desk
+                       zone drawn in the UI; the video is cropped to it) — not in the ТЗ
                        optional UI endpoints (not in the ТЗ; ТЗ response stays exact):
-                       /jobs/{id}/progress, /jobs/{id}/details, /norms, /zones
+                       /jobs/{id}/progress, /jobs/{id}/details, /norms, /ml/health
   schemas.py           response format fixed by the ТЗ
   rules.py             loads rules/*.yaml
   pipeline/
     model.py           ← ML models: detector, scene state, VLM verifier   TODO(ml)
     events.py          ← rule detectors per violation type, merging        TODO(data)
     video.py           frame sampling, JPEG evidence
-    runner.py          video -> violations (wires the steps together)
+    remote.py          ← ML server client: POST {ML_URL}/infer, segment cut, norms from norms.yaml
+    runner.py          video -> violations (ML server if ML_URL is set, else the local steps)
 training/
   train_detector.py    ← trains the detector into weights/detector.pt      TODO(ml)
 rules/

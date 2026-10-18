@@ -102,39 +102,97 @@ $("timeline").addEventListener("pointermove", (e) => {
 });
 $("timeline").addEventListener("pointerleave", () => { $("hover-preview").hidden = true; });
 
-// ---------- ROI overlay: zones from config.yaml (scene.zones), normalized x1, y1, x2, y2 ----------
+// ---------- ROI: the cash desk zone, drawn with the mouse per video ----------
+// entry.roi = [x1, y1, x2, y2] in 0..1 of the frame, entry.roiOn = the switch. When both are set,
+// the analysis sends `roi` and the backend crops the video to it before the ML server (experimental).
 
-const ZONE_NAMES = { cash_desk: "Зона кассы", safe: "Сейф" };
-let zones = null; // loaded once from GET /api/v1/zones
+const ROI_MIN = 0.05; // same as config.yaml → roi.min_side
 
-async function loadZones() {
-  if (zones) return zones;
-  if (DEMO) return zones = { cash_desk: [0.25, 0.35, 0.75, 0.95] };
-  try { zones = await api("/zones"); } catch { zones = {}; }
-  return zones;
-}
-
-function drawZones() {
+// The video is letterboxed (object-fit: contain): the layer covers exactly the picture.
+function placeRoiLayer() {
   const layer = $("roi-layer");
-  if (layer.hidden || !zones || !video.videoWidth) return;
-  // The video is letterboxed (object-fit: contain): place boxes over the actual picture.
+  if (!video.videoWidth) return;
   const scale = Math.min(video.clientWidth / video.videoWidth, video.clientHeight / video.videoHeight);
   const w = video.videoWidth * scale, h = video.videoHeight * scale;
-  const left = (video.clientWidth - w) / 2, top = (video.clientHeight - h) / 2;
-  layer.replaceChildren(...Object.entries(zones).map(([name, [x1, y1, x2, y2]]) => el("div", {
-    className: "roi-box", textContent: ZONE_NAMES[name] || name,
-    style: `left:${left + x1 * w}px; top:${top + y1 * h}px; width:${(x2 - x1) * w}px; height:${(y2 - y1) * h}px`,
-  })));
+  Object.assign(layer.style, { left: `${(video.clientWidth - w) / 2}px`, top: `${(video.clientHeight - h) / 2}px`,
+                               width: `${w}px`, height: `${h}px` });
 }
 
-$("roi-toggle").onchange = async () => {
-  const on = $("roi-toggle").checked;
-  await loadZones();
-  const empty = !Object.keys(zones).length;
-  $("roi-layer").hidden = !on || empty;
-  $("roi-note").hidden = !(on && empty);
-  $("roi-note").textContent = "Зоны кассы ещё не размечены — задайте их в config.yaml → scene.zones.";
-  drawZones();
+function updateRoi() {
+  const on = Boolean(current?.roiOn), roi = current?.roi;
+  $("roi-toggle").checked = on;
+  $("roi-layer").hidden = !on;
+  placeRoiLayer();
+  const pct = (v) => `${Math.round(v * 100)}%`;
+  $("roi-layer").replaceChildren(roi
+    ? el("div", { className: roi[1] < 0.06 ? "roi-box at-top" : "roi-box", style: `left:${pct(roi[0])}; top:${pct(roi[1])}; width:${pct(roi[2] - roi[0])}; height:${pct(roi[3] - roi[1])}` },
+        el("span", { className: "roi-label" }, icon("scan"), "Зона кассы"),
+        ...["nw", "ne", "sw", "se"].map((corner) => {
+          const handle = el("span", { className: `roi-handle ${corner}` });
+          handle.dataset.corner = corner;
+          return handle;
+        }))
+    : el("div", { className: "roi-hint" }, el("span", { className: "roi-hint-chip" }, icon("scan"), "Обведите стол кассира")));
+  $("roi-note").hidden = !on;
+  $("roi-note").replaceChildren(...(roi
+    ? [icon("scan", "c-amber"), "Анализ пойдёт только по выделенной зоне — видео обрезается перед отправкой в модель. Экспериментально. ",
+       el("button", { className: "link", type: "button", textContent: "Сбросить зону", onclick: () => setRoi(null) })]
+    : [icon("scan", "c-amber"), "Нарисуйте прямоугольник на видео: только эта область пойдёт в анализ."]));
+}
+
+function setRoi(roi) {
+  current.roi = roi;
+  updateRoi();
+  saveSession(current);
+}
+
+// Drawing: drag on empty space = new zone, drag inside = move, drag a corner = resize.
+let roiDrag = null;
+$("roi-layer").addEventListener("pointerdown", (e) => {
+  const box = $("roi-layer").getBoundingClientRect();
+  const at = (ev) => [Math.min(1, Math.max(0, (ev.clientX - box.left) / box.width)),
+                      Math.min(1, Math.max(0, (ev.clientY - box.top) / box.height))];
+  const [x, y] = at(e), start = current.roi;
+  const corner = e.target.dataset.corner;
+  const mode = corner ? "resize" : e.target.closest(".roi-box") ? "move" : "draw";
+  roiDrag = { at, x, y, start, mode, corner };
+  $("roi-layer").setPointerCapture(e.pointerId);
+  $("roi-layer").classList.add("dragging");
+  e.preventDefault();
+});
+$("roi-layer").addEventListener("pointermove", (e) => {
+  if (!roiDrag) return;
+  const { at, x, y, start, mode, corner } = roiDrag;
+  const [px, py] = at(e);
+  let roi;
+  if (mode === "draw") roi = [Math.min(x, px), Math.min(y, py), Math.max(x, px), Math.max(y, py)];
+  if (mode === "move") {
+    const w = start[2] - start[0], h = start[3] - start[1];
+    const nx = Math.min(1 - w, Math.max(0, start[0] + px - x)), ny = Math.min(1 - h, Math.max(0, start[1] + py - y));
+    roi = [nx, ny, nx + w, ny + h];
+  }
+  if (mode === "resize") {
+    roi = [...start];
+    if (corner.includes("w")) roi[0] = Math.min(px, start[2] - ROI_MIN); else roi[2] = Math.max(px, start[0] + ROI_MIN);
+    if (corner.includes("n")) roi[1] = Math.min(py, start[3] - ROI_MIN); else roi[3] = Math.max(py, start[1] + ROI_MIN);
+  }
+  current.roi = roi;
+  updateRoi();
+});
+$("roi-layer").addEventListener("pointerup", () => {
+  if (!roiDrag) return;
+  const roi = current.roi;
+  // a click or a too small box keeps the previous zone
+  if (roi && (roi[2] - roi[0] < ROI_MIN || roi[3] - roi[1] < ROI_MIN)) current.roi = roiDrag.start;
+  roiDrag = null;
+  $("roi-layer").classList.remove("dragging");
+  setRoi(current.roi);
+});
+
+$("roi-toggle").onchange = () => {
+  current.roiOn = $("roi-toggle").checked;
+  updateRoi();
+  saveSession(current);
 };
-video.addEventListener("loadedmetadata", drawZones);
-new ResizeObserver(drawZones).observe(video);
+video.addEventListener("loadedmetadata", placeRoiLayer);
+new ResizeObserver(placeRoiLayer).observe(video);

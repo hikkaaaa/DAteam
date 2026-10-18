@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Кассовый контроль</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231f6f68'/%3E%3Crect x='7' y='10' width='13' height='12' rx='2.5' fill='none' stroke='white' stroke-width='2'/%3E%3Cpath d='M20 14.5 25 11.5v9l-5-3' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=8">
   <script>try { document.documentElement.dataset.theme = localStorage.getItem("theme") || ""; } catch {}</script>
 </head>
 <body>
@@ -42,6 +42,8 @@
       </div>
     </div>
     <div class="topbar-actions">
+      <!-- ML server status (GET /api/v1/ml/health), hidden when ML_URL isn't set -->
+      <span id="ml-status" class="ml-status" hidden><span class="dot"></span><span id="ml-status-text">ML-сервер</span></span>
       <button id="theme-button" class="button ghost icon" type="button" title="Светлая / тёмная тема"><i id="theme-icon" data-icon="sun" class="c-amber"></i></button>
       <button id="key-button" class="button ghost" type="button"><i data-icon="key" class="c-amber"></i>API-ключ<span id="key-dot" class="dot"></span></button>
     </div>
@@ -97,7 +99,7 @@
             <button class="tool speed active" type="button" data-rate="1">1x</button>
             <button class="tool speed" type="button" data-rate="2">2x</button>
           </div>
-          <label class="switch" title="Показать размеченные зоны из config.yaml (scene.zones)">
+          <label class="switch" title="Обвести стол кассира: анализ пойдёт только по этой зоне">
             <input id="roi-toggle" type="checkbox"> <span>Зона кассы (ROI)</span>
           </label>
         </div>
@@ -244,7 +246,13 @@
 
   <dialog id="frame-dialog" class="frame-dialog">
     <form method="dialog">
-      <img id="frame-image" alt="Кадр-доказательство">
+      <!-- Evidence slideshow: ← / → or the arrows switch frames -->
+      <div class="slide-stage">
+        <img id="frame-image" alt="Кадр-доказательство">
+        <button id="frame-prev" class="slide-arrow prev" type="button" title="Предыдущий кадр (←)"><i data-icon="chevronLeft"></i></button>
+        <button id="frame-next" class="slide-arrow next" type="button" title="Следующий кадр (→)"><i data-icon="chevronRight"></i></button>
+      </div>
+      <div id="frame-thumbs" class="slide-thumbs"></div>
       <div class="dialog-actions">
         <span id="frame-caption" class="muted"></span>
         <button class="button ghost">Закрыть</button>
@@ -252,13 +260,13 @@
     </form>
   </dialog>
 
-  <script src="icons.js"></script>
-  <script src="storage.js"></script>
-  <script src="app.js"></script>
-  <script src="player.js"></script>
-  <script src="norms.js"></script>
-  <script src="library.js"></script>
-  <script src="filters.js"></script>
-  <script src="report.js"></script>
+  <script src="icons.js?v=8"></script>
+  <script src="storage.js?v=8"></script>
+  <script src="app.js?v=8"></script>
+  <script src="player.js?v=8"></script>
+  <script src="norms.js?v=8"></script>
+  <script src="library.js?v=8"></script>
+  <script src="filters.js?v=8"></script>
+  <script src="report.js?v=8"></script>
 </body>
 </html>

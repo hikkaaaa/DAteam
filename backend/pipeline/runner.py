@@ -6,15 +6,18 @@ from pathlib import Path
 from config import CONFIG
 from pipeline.events import describe, evidence_times, find_events, merge_events
 from pipeline.model import Detector, Verifier, build_scene_state
+from pipeline.remote import analyze_remote, ml_url
 from pipeline.video import duration_sec, encode_jpeg, iter_frames, read_frames_at
 from rules import load_active_rules
 from schemas import EvidenceFrame, Violation
 
 
 def analyze_video(video_path: Path, start_sec: float | None = None, end_sec: float | None = None,
-                  on_progress: Callable[[float, str], None] = lambda p, stage: None,
+                  on_progress: Callable[..., None] = lambda *_: None,
+                  roi: tuple[float, float, float, float] | None = None,
                   ) -> tuple[list[Violation], list[dict]]:
-    """Analyze the whole video, or only [start_sec, end_sec] if given.
+    """Analyze the whole video, or only [start_sec, end_sec] if given; `roi` (x1, y1, x2, y2 in 0..1)
+    crops the frame to the cash desk zone drawn in the UI.
 
     Returns (violations, details):
       violations — exactly the ТЗ format;
@@ -22,6 +25,10 @@ def analyze_video(video_path: Path, start_sec: float | None = None, end_sec: flo
                    the norm with its verbatim quote. Served by the optional /details endpoint.
     `on_progress(0..1, stage)` drives the UI's step-by-step progress: detect -> rules -> report.
     """
+    if ml_url():  # models run on the team's GPU server (pipeline/remote.py)
+        return analyze_remote(video_path, start_sec, end_sec, on_progress, roi)
+
+    # Local pipeline (stubs in pipeline/model.py) — used when ML_URL is not set. `roi` is ignored here.
     seg_start = start_sec or 0.0
     seg_end = min(end_sec or float("inf"), duration_sec(video_path)) or 1.0
     types, norms = load_active_rules()

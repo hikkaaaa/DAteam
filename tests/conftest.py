@@ -6,6 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 os.environ.setdefault("API_KEY", "test-key")
+os.environ["ML_URL"] = ""  # tests never call the real ML server (beats ML_URL from .env)
 
 
 @pytest.fixture(autouse=True)
