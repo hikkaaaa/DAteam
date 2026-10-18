@@ -8,6 +8,9 @@ venv/
 # Secrets
 .env
 
+# Local notes for the AI coding assistant: keep on this machine only
+CLAUDE.md
+
 # Large / local-only artifacts (never commit)
 weights/*
 !weights/.gitkeep
