@@ -2,6 +2,7 @@
 
 Stored on the server in storage/feedback/ (config.yaml → storage.feedback_dir):
   feedback.jsonl   append-only log; the last record with a given id wins (re-votes, deletions)
+  train.jsonl      current trainable feedback only (rewritten after every verdict)
   frames/<id>.jpg  the evidence frame the reviewer looked at
 Exported as a zip dataset for the ML team, who review it and periodically re-train the LoRA adapter.
 Only records with trainable=true go to train.jsonl.
@@ -63,7 +64,19 @@ def save(fb: Feedback) -> dict:
         _dir().mkdir(parents=True, exist_ok=True)
         with open(_dir() / "feedback.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    _write_train()
     return record
+
+
+def _train_lines(items: list[dict]) -> str:
+    return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in items if r["trainable"])
+
+
+def _write_train() -> None:
+    """storage/feedback/train.jsonl: only trainable feedback, rewritten after every new verdict."""
+    tmp = _dir() / "train.jsonl.tmp"
+    tmp.write_text(_train_lines(latest()), encoding="utf-8")
+    tmp.replace(_dir() / "train.jsonl")  # atomic: readers never see a half-written file
 
 
 def latest() -> list[dict]:
@@ -118,7 +131,7 @@ def export_zip() -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("README.txt", README)
         z.writestr("feedback.jsonl", "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in items))
-        z.writestr("train.jsonl", "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in items if r["trainable"]))
+        z.writestr("train.jsonl", _train_lines(items))
         for r in items:
             frame = r["frame"] and _dir() / "frames" / r["frame"]
             if frame and frame.exists():

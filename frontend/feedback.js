@@ -151,9 +151,11 @@ async function renderFeedbackPage() {
             el("strong", { textContent: t.type }),
             el("span", { className: "muted", textContent: [t.correct && `верно ${t.correct}`, t.incorrect && `неверно ${t.incorrect}`,
                                                           t.missed && `пропущено ${t.missed}`].filter(Boolean).join(" · ") })),
-          el("div", { className: "fb-track", style: `width: ${Math.max(8, n / max * 100)}%` },
-            ...["correct", "incorrect", "missed"].filter((k) => t[k]).map((k) =>
-              el("span", { className: `fb-seg ${VERDICTS[k][1]}`, style: `flex: ${t[k]}` }))));
+          // grey rail = the most reviewed type; the coloured part = this type's share of it
+          el("div", { className: "fb-rail" },
+            el("div", { className: "fb-track", style: `width: ${Math.max(8, n / max * 100)}%` },
+              ...["correct", "incorrect", "missed"].filter((k) => t[k]).map((k) =>
+                el("span", { className: `fb-seg ${VERDICTS[k][1]}`, style: `flex: ${t[k]}` })))));
       })),
     el("section", { className: "fb-section" },
       el("h3", { textContent: "Все отзывы" }),

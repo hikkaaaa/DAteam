@@ -4,6 +4,7 @@
 """
 
 import base64
+import json
 import time
 from fractions import Fraction
 
@@ -262,6 +263,10 @@ def test_feedback(client):
     assert len(z.read("feedback.jsonl").decode().splitlines()) == 2
     assert len(z.read("train.jsonl").decode().splitlines()) == 1
     assert sum(n.startswith("frames/") for n in z.namelist()) == 1
+
+    from config import CONFIG, path  # train.jsonl also kept up to date on the server
+    train = (path(CONFIG["storage"]["feedback_dir"]) / "train.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["id"] for line in train] == ["s1:m"]
 
 
 def test_rules_files_are_consistent():

@@ -575,6 +575,7 @@ button.timecode { border: none; font: inherit; font-size: 12px; font-weight: 600
 .fb-section h3 { margin-bottom: 12px; }
 .fb-type { padding: 8px 0; }
 .fb-type-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-size: 14px; }
+.fb-rail { height: 10px; border-radius: 999px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
 .fb-track { display: flex; gap: 2px; height: 10px; border-radius: 999px; overflow: hidden; animation: grow .7s cubic-bezier(.2, .8, .2, 1) both; transform-origin: left; }
 @keyframes grow { from { transform: scaleX(0); } }
 .fb-seg.ok { background: var(--ok); } .fb-seg.bad { background: var(--danger); } .fb-seg.miss { background: #f59e0b; }
