@@ -42,7 +42,7 @@ rules:
 detectors:
   # Parameters for each rule detector in backend/pipeline/events.py.
   # TODO(data): tune on the training split, then re-run scripts/evaluate.py.
-  V01:
+  cash_left_unattended:          # V04 «Наличные оставлены без присмотра»
     min_duration_sec: 30
 
 vlm:

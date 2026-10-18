@@ -91,6 +91,6 @@ class Verifier:
         n = self.cfg["frames_per_candidate"]
         times = [start_sec + i * (end_sec - start_sec) / max(n - 1, 1) for i in range(n)]
         frames = read_frames_at(video_path, times, CONFIG["video"]["max_side_px"])
-        # TODO(ml): ask `question` (a yes/no question built from the type's visual_criterion)
+        # TODO(ml): ask `question` (a yes/no question built from the type's criterion)
         #   on each frame; return share_of_yes >= self.cfg["min_agreement"].
         raise NotImplementedError

@@ -1,7 +1,7 @@
 """Scene timeline -> violation events: rule detectors, merging, descriptions.
 
-To add a violation type: write a detector below, register it in DETECTORS,
-and put its thresholds under `detectors.<id>` in config.yaml.
+To add a violation type: write a detector below, register it in DETECTORS under the type's `key`
+from rules/violation_types.yaml, and put its thresholds under `detectors.<key>` in config.yaml.
 """
 
 from collections.abc import Callable
@@ -14,7 +14,7 @@ from rules import Norm, ViolationType
 
 @dataclass
 class Event:
-    type_id: str          # V01, V02, ... from rules/violation_types.yaml
+    type_id: str          # V01, V02, ... from rules/violation_types.yaml (set by find_events)
     start_sec: float
     end_sec: float
     peak_sec: float       # moment of highest confidence -> timecode_sec in the API
@@ -40,28 +40,34 @@ def find_intervals(states: list[SceneState], condition: Callable[[SceneState], b
 
 # ---------- Rule detectors (one per violation type) ----------
 
-def detect_unattended_cash(states: list[SceneState], params: dict) -> list[Event]:
-    """V01 (draft): cash stays on the desk while the cashier is away."""
+def detect_cash_left_unattended(states: list[SceneState], params: dict) -> list[Event]:
+    """V04 `cash_left_unattended` (черновик): cash stays on the desk while the cashier is away."""
     def condition(s: SceneState) -> bool | None:
         if s.cash_on_desk is None or s.cashier_at_desk is None:
             return None
         return s.cash_on_desk and not s.cashier_at_desk
 
     # TODO(ml): replace the fixed confidence with a real score (e.g. mean detector confidence).
-    return [Event("V01", a, b, (a + b) / 2, confidence=0.7)
+    return [Event("", a, b, (a + b) / 2, confidence=0.7)
             for a, b in find_intervals(states, condition, params["min_duration_sec"])]
 
 
-# TODO(data): add a detector for every type confirmed in rules/violation_types.yaml.
+# Detector name (`key` in rules/violation_types.yaml) -> function.
+# TODO(ml): add a detector for every key in rules/violation_types.yaml (28 types, all «черновик» for now).
 DETECTORS: dict[str, Callable[[list[SceneState], dict], list[Event]]] = {
-    "V01": detect_unattended_cash,
+    "cash_left_unattended": detect_cash_left_unattended,
 }
 
 
-def find_events(states: list[SceneState], type_ids: set[str]) -> list[Event]:
+def find_events(states: list[SceneState], types: dict[str, ViolationType]) -> list[Event]:
     events = []
-    for type_id in type_ids & DETECTORS.keys():
-        events += DETECTORS[type_id](states, CONFIG["detectors"].get(type_id, {}))
+    for type_id, vtype in types.items():
+        detector = DETECTORS.get(vtype.key)
+        if detector is None:
+            continue
+        for event in detector(states, CONFIG["detectors"].get(vtype.key, {})):
+            event.type_id = type_id
+            events.append(event)
     return events
 
 
@@ -91,8 +97,14 @@ def evidence_times(event: Event) -> list[float]:
     return times
 
 
+class _Facts(dict):
+    def __missing__(self, key):  # an unknown placeholder never crashes the job
+        return "?"
+
+
 def describe(event: Event, vtype: ViolationType, norm: Norm) -> str:
-    """Observed facts only, then the rule — always "может указывать", never "нарушен закон"."""
-    facts = {"start_sec": event.start_sec, "end_sec": event.end_sec,
-             "duration_sec": event.end_sec - event.start_sec, **event.facts}
-    return f"{vtype.description_template.format(**facts)} Это может указывать на нарушение требования: {norm.source}."
+    """Template from violation_types.yaml (observed facts + "может указывать на …"), then the norm.
+    Placeholders: {t} start time (m:ss), {dur} duration in seconds, {n} people count (from detector facts)."""
+    start = int(event.start_sec)
+    facts = _Facts(t=f"{start // 60}:{start % 60:02d}", dur=round(event.end_sec - event.start_sec), **event.facts)
+    return f"{vtype.template.format_map(facts)} Норма: {norm.source}."

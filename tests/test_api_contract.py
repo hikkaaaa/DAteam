@@ -84,7 +84,8 @@ def test_segment(client, mov_file, monkeypatch):
 
 def test_reference_endpoints(client):
     assert client.get("/api/v1/norms").status_code == 401
-    assert isinstance(client.get("/api/v1/norms", headers=HEADERS).json(), list)
+    base = client.get("/api/v1/norms", headers=HEADERS).json()
+    assert {"updated_at", "documents", "norms", "violation_types"} <= base.keys()
     assert isinstance(client.get("/api/v1/zones", headers=HEADERS).json(), dict)
 
 
@@ -155,3 +156,27 @@ def test_failed_job(client, tmp_path):
     path.write_bytes(b"definitely not a video")
     body = wait_for_job(client, upload(client, path).json()["job_id"])
     assert body["status"] == "failed"
+
+
+def test_rules_files_are_consistent():
+    """rules/*.yaml parse, every type's norm exists, and only confirmed types can reach the API."""
+    from rules import CONFIRMED, load_active_rules, load_norms, load_violation_types
+
+    norms, types = load_norms(), load_violation_types()
+    assert norms and types
+    for t in types.values():
+        assert t.norms and all(n in norms for n in t.norms), t.id
+        assert t.template.strip(), t.id
+    active, _ = load_active_rules()
+    assert all(t.status == CONFIRMED for t in active.values())
+
+
+def test_description_uses_template_and_norm():
+    from pipeline.events import Event, describe
+    from rules import load_norms, load_violation_types
+
+    norms, types = load_norms(), load_violation_types()
+    v04 = types["V04"]
+    text = describe(Event("V04", 65, 103, 80, 0.9), v04, norms[v04.norms[0]])
+    assert text.startswith("С 1:05 на столе кассира видны наличные")
+    assert "≈38 с" in text and "Норма: п. 20 ч. 2" in text and "Правил № 231" in text

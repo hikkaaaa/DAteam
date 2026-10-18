@@ -36,9 +36,9 @@ def analyze_video(video_path: Path, start_sec: float | None = None, end_sec: flo
 
     # 4–6. Candidate events -> VLM check -> merge + confidence filter.
     on_progress(0.85, "rules")
-    candidates = find_events(states, set(types))
+    candidates = find_events(states, types)
     verified = [e for e in candidates
-                if verifier.confirms(video_path, e.start_sec, e.end_sec, types[e.type_id].visual_criterion)]
+                if verifier.confirms(video_path, e.start_sec, e.end_sec, types[e.type_id].criterion)]
 
     # 7. Description from facts + norms.yaml, 1–3 evidence frames.
     on_progress(0.9, "report")
@@ -46,7 +46,7 @@ def analyze_video(video_path: Path, start_sec: float | None = None, end_sec: flo
     violations, details = [], []
     for i, event in enumerate(events):
         vtype = types[event.type_id]
-        norm = norms[vtype.rule_id]
+        norm = norms[vtype.norms[0]]
         frames = read_frames_at(video_path, evidence_times(event))
         violations.append(Violation(
             type=vtype.type,
@@ -60,7 +60,8 @@ def analyze_video(video_path: Path, start_sec: float | None = None, end_sec: flo
             "confidence": round(event.confidence, 3),
             "start_sec": round(event.start_sec, 2),
             "end_sec": round(event.end_sec, 2),
-            "rule": norm.model_dump(),  # document, clause, verbatim quote, url, ...
+            "rule": norm.public(),  # document, clause, verbatim quote, url, ...
+            "other_norms": [norms[n].public() for n in vtype.norms[1:] if n in norms],
         })
         on_progress(0.9 + 0.1 * (i + 1) / len(events), "report")
     return violations, details

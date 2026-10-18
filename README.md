@@ -35,24 +35,28 @@ backend/
 training/
   train_detector.py    ← trains the detector into weights/detector.pt      TODO(ml)
 rules/
-  norms.yaml           ← legal references, the ONLY allowed source          TODO(data)
-  violation_types.yaml ← violation types; only `confirmed` ones are output
+  norms.yaml           legal references (documents + 30 norms), the ONLY allowed source; `updated_at` = base date
+  violation_types.yaml 28 violation types (all «черновик»); only `подтверждён` ones are output
 scripts/
   download_weights.py  the only step that uses the network
   evaluate.py          jury metrics -> reports/
 frontend/              index.html, style.css
-  app.js               main flow: upload, progress, results, history
+  app.js               main flow: upload, progress, results
   player.js            audit player: frame step, speed, episodes, hotkeys, ROI zones
   norms.js             "Нормативная база РК" tab
+  library.js           history search, manual annotations, categories, category feed
+  filters.js           "Фильтры": all videos, sorting, filter by laws
+  storage.js           IndexedDB: analyzed sessions + videos saved in this browser only
+  icons.js             Lucide icons (inline, offline)
   report.js            PDF report (browser print → Save as PDF)
   assets/demo/         sample videos for the demo buttons (git-ignored)
 config.yaml            every threshold and parameter
 weights/  data/        git-ignored
 ```
 
-## Adding a violation type
+## Enabling a violation type
 
-1. Add the verified clause to `rules/norms.yaml` (verbatim quote, `applies_to: [Vxx]`).
-2. Add the type to `rules/violation_types.yaml` with `rule_id` and `status: confirmed`.
-3. Write its detector in `backend/pipeline/events.py` and register it in `DETECTORS`.
-4. Put its thresholds under `detectors.Vxx` in `config.yaml`, then run `scripts/evaluate.py`.
+1. Make sure its norms in `rules/norms.yaml` have verbatim quotes (and set `adilet_checked_at` once checked on adilet).
+2. Write the detector in `backend/pipeline/events.py` and register it in `DETECTORS` under the type's `key`.
+3. Put its thresholds under `detectors.<key>` in `config.yaml`, then run `scripts/evaluate.py`.
+4. Set `status: подтверждён` in `rules/violation_types.yaml`. Only then the type can appear in the API.

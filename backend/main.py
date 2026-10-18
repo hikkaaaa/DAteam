@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import CONFIG, ROOT, api_key, path
 from pipeline.runner import analyze_video
-from rules import load_norms
+from rules import load_documents, load_norms, load_norms_file, load_violation_types
 from schemas import JobResponse
 
 logger = logging.getLogger(__name__)
@@ -147,9 +147,17 @@ def get_details(job_id: str) -> dict:
 
 
 @app.get("/api/v1/norms", dependencies=[Depends(require_api_key)])
-def get_norms() -> list[dict]:
-    """Normative base from rules/norms.yaml (complete entries only) for the "Нормативная база РК" tab."""
-    return [norm.model_dump() for norm in load_norms().values()]
+def get_norms() -> dict:
+    """Normative base for the "Нормативная база РК" and "Фильтры" pages:
+    documents, norms (with the violation types that cite them) and the violation types themselves."""
+    types = load_violation_types()
+    return {
+        "updated_at": load_norms_file().get("updated_at"),
+        "documents": [{**d.model_dump(), "short": d.short} for d in load_documents().values()],
+        "norms": [{**n.public(), "types": [{"id": t.id, "type": t.type} for t in types.values() if n.id in t.norms]}
+                  for n in load_norms().values()],
+        "violation_types": [{"id": t.id, "type": t.type, "norms": t.norms, "status": t.status} for t in types.values()],
+    }
 
 
 @app.get("/api/v1/zones", dependencies=[Depends(require_api_key)])

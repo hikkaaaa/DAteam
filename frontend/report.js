@@ -32,6 +32,13 @@ function downloadReport() {
           ? el("div", {}, el("strong", { textContent: `${v.extra.rule.clause} ${v.extra.rule.document}` }),
               el("q", { textContent: v.extra.rule.quote }), el("p", { className: "muted", textContent: v.extra.rule.url }))
           : "см. описание"))))) : null,
+    entry.notes?.length ? el("div", {},
+      el("h2", { className: "report-section", textContent: "Ручные отметки проверяющего" }),
+      el("table", { className: "report-events" },
+        el("thead", {}, el("tr", {}, ...["Таймкод", "Тип", "Комментарий"].map((h) => el("th", { textContent: h })))),
+        el("tbody", {}, ...entry.notes.map((n) => el("tr", {},
+          el("td", { textContent: n.timecode_sec != null ? fmt(n.timecode_sec) : "—" }),
+          el("td", { textContent: n.type }), el("td", { textContent: n.text || "" })))))) : null,
     el("footer", { textContent: "Результат — подсказка проверяющему, а не юридическое заключение. " +
                                 "Сформировано автоматически локальной AI-системой." }));
 

@@ -20,8 +20,14 @@
     <button class="rail-item tab" type="button" data-view="norms-view" title="Нормативная база РК">
       <i data-icon="book" class="c-violet"></i><span class="label">Нормативная база РК</span>
     </button>
+    <button class="rail-item tab" type="button" data-view="filters-view" title="Фильтры: все видео">
+      <i data-icon="listFilter" class="c-amber"></i><span class="label">Фильтры</span>
+    </button>
+    <button class="rail-item tab" type="button" data-view="categories-view" title="Категории">
+      <i data-icon="folder" class="c-rose"></i><span class="label">Категории</span>
+    </button>
     <span class="rail-divider"></span>
-    <button id="history-button" class="rail-item" type="button" title="История">
+    <button id="history-button" class="rail-item tab" type="button" data-view="history-view" title="История">
       <i data-icon="history" class="c-sky"></i><span class="label">История</span><span id="history-count" class="count"></span>
     </button>
   </nav>
@@ -126,13 +132,66 @@
       <div>
         <h2>Нормативная база РК</h2>
         <p class="muted">Пункты нормативных актов, на которые ссылается анализ. Источник — rules/norms.yaml.</p>
+        <p id="norms-summary" class="muted"></p>
       </div>
       <input id="norms-search" class="search" type="search" placeholder="Поиск по документу, пункту или цитате">
     </div>
     <div id="norms-list" class="norms-list"></div>
   </main>
 
-  <footer class="muted">Результат — подсказка проверяющему, а не юридическое заключение.</footer>
+  <!-- ===== Tab: filters — every submitted video, sorting, filter by laws ===== -->
+  <main id="filters-view" class="filters-view" hidden>
+    <div class="norms-head">
+      <div>
+        <h2>Все видео</h2>
+        <p id="filter-summary" class="muted"></p>
+      </div>
+      <div class="filter-controls">
+        <input id="filter-search" class="search" type="search" placeholder="Поиск по файлу, нарушению, отметке">
+        <select id="filter-sort" class="select" title="Сортировка"></select>
+        <div class="law-picker">
+          <button id="law-button" class="button ghost" type="button"><i data-icon="scale" class="c-violet"></i>Законы <span id="law-count" class="count"></span></button>
+          <div id="law-popup" class="law-popup" hidden>
+            <input id="law-search" class="search" type="search" placeholder="Поиск по пункту, правилам или нарушению">
+            <div id="law-options" class="law-options"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="law-chips" class="chips law-chips"></div>
+    <div id="filter-list" class="video-grid"></div>
+  </main>
+
+  <!-- ===== Tab: history — saved sessions (left) and the selected session right here (right) ===== -->
+  <main id="history-view" class="split-view" hidden>
+    <aside class="panel side-panel">
+      <h2>История</h2>
+      <input id="history-search" class="search" type="search" placeholder="Поиск по типу нарушения, отметке, файлу, категории">
+      <p id="history-summary" class="muted history-summary"></p>
+      <div id="history-list" class="history-list"></div>
+    </aside>
+    <section id="history-detail" class="category-feed"></section>
+  </main>
+
+  <!-- ===== Tab 3: categories (management + feed of all videos in a category) ===== -->
+  <main id="categories-view" class="split-view" hidden>
+    <aside class="panel side-panel">
+      <h2>Категории</h2>
+      <p class="muted">Подборки видео для обучения и проверки.</p>
+      <form id="category-create" class="inline-form">
+        <input id="category-create-name" placeholder="Новая категория" autocomplete="off">
+        <button class="button primary" type="submit">Создать</button>
+      </form>
+      <div id="category-list" class="category-list"></div>
+    </aside>
+    <section id="category-feed" class="category-feed"></section>
+  </main>
+
+  <footer class="muted">
+    <span id="footer-disclaimer">Результат — подсказка проверяющему, а не юридическое заключение.</span>
+    <!-- Shown instead of the disclaimer on the "Нормативная база РК" page -->
+    <span id="footer-updated" class="footer-updated" hidden></span>
+  </footer>
 
   <!-- Printable report: filled by report.js, visible only when printing / saving as PDF -->
   <div id="report" class="report"></div>
@@ -148,14 +207,38 @@
     </form>
   </dialog>
 
-  <dialog id="history-dialog" class="history-drawer">
-    <form method="dialog">
-      <div class="drawer-head">
-        <h3>История</h3>
-        <button class="close" aria-label="Закрыть" autofocus>×</button>
+  <dialog id="note-dialog">
+    <form id="note-form" method="dialog">
+      <h3>Ручная отметка</h3>
+      <p class="muted">Своя метка нарушения или заметка. Сохраняется в браузере и ищется в истории.</p>
+      <label class="field">Тип нарушения
+        <input id="note-type" list="known-types" placeholder="Например, «Деньги без присмотра»" autocomplete="off">
+      </label>
+      <datalist id="known-types"></datalist>
+      <div class="field-row">
+        <label class="field">Таймкод <input id="note-time" placeholder="0:44.2"></label>
+        <label class="check"><input id="note-no-time" type="checkbox"> без таймкода</label>
       </div>
-      <p class="muted">Последние 10 видео. Очищается при перезагрузке страницы.</p>
-      <div id="history-list" class="history-list"></div>
+      <label class="field">Комментарий <textarea id="note-text" rows="3" placeholder="Что видно и почему это важно"></textarea></label>
+      <div class="dialog-actions">
+        <button class="button ghost" value="cancel" formnovalidate>Отмена</button>
+        <button class="button primary" value="save">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="category-dialog">
+    <form id="category-form" method="dialog">
+      <h3>Категории видео</h3>
+      <div id="category-options" class="category-options"></div>
+      <div class="inline-form">
+        <input id="category-new" placeholder="Новая категория" autocomplete="off">
+        <button id="category-add" class="button ghost" type="button">Добавить</button>
+      </div>
+      <div class="dialog-actions">
+        <button class="button ghost" value="cancel">Отмена</button>
+        <button class="button primary" value="save">Сохранить</button>
+      </div>
     </form>
   </dialog>
 
@@ -170,9 +253,12 @@
   </dialog>
 
   <script src="icons.js"></script>
+  <script src="storage.js"></script>
   <script src="app.js"></script>
   <script src="player.js"></script>
   <script src="norms.js"></script>
+  <script src="library.js"></script>
+  <script src="filters.js"></script>
   <script src="report.js"></script>
 </body>
 </html>

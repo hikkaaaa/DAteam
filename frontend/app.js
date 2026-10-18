@@ -1,14 +1,15 @@
 // Main flow: upload a video -> POST /api/v1/analyze -> poll /api/v1/jobs/{id} -> show violations.
-// Other files: player.js (audit player tools), norms.js (normative base tab), report.js (PDF report).
+// Other files: icons.js, storage.js (IndexedDB), player.js (audit player tools), norms.js (normative base tab),
+// library.js (history search, manual annotations, categories, category feed), report.js (PDF report).
 // Open with ?demo to see sample results without calling the backend.
-// History lives in page memory only: it is cleared when the page is reloaded.
+// Analyzed sessions are saved in this browser (storage.js) and survive page reloads.
 
 const DEMO = new URLSearchParams(location.search).has("demo");
-const HISTORY_LIMIT = 10;
+const HISTORY_LIMIT = 50; // sessions kept in the history / browser storage
 const $ = (id) => document.getElementById(id);
 const video = $("video");
-// newest first: { file, url, addedAt, status: ready|processing|done|failed, result, details, error, range,
-//                 progress, jobId, elapsedSec, analyzedAt }
+// newest first: { id, file, url, addedAt, status: ready|processing|done|failed, result, details, error, range,
+//                 progress, jobId, elapsedSec, analyzedAt, notes: [manual annotations], categoryIds: [] }
 let uploads = [];
 let current = null; // entry shown in the player
 let violations = []; // current result: ТЗ fields + `extra` (confidence, interval, rule) from /details
@@ -92,19 +93,21 @@ async function demoResult(entry) {
   }
   const { start, end } = entry.range || { start: 0, end: video.duration || 60 };
   const at = (k) => +(start + (end - start) * k).toFixed(1);
+  // Real violation types and norms (rules/*.yaml) when the base is reachable, placeholders otherwise.
+  const base = getKey() ? await loadNormsBase().catch(() => null) : null;
+  const norm = (id) => base?.norms.find((n) => n.id === id) || { id, document: "Демо-документ", document_short: "Демо",
+    clause: "п. —", quote: "Здесь появится дословная цитата пункта из rules/norms.yaml.", url: "https://adilet.zan.kz/" };
   const demo = [
-    [at(0.22), "Демо: деньги без присмотра", "Кассир отходит от рабочего места, денежные средства остаются на столе 38 с.", 0.94],
-    [at(0.58), "Демо: открытое хранилище", "Дверца сейфа остаётся открытой, в зоне кассы нет сотрудника 21 с.", 0.81],
+    [at(0.22), "Наличные оставлены без присмотра", "С 0:05 на столе кассира видны наличные, кассира в зоне рабочего места нет (≈38 с). Это может указывать на хранение наличных вне запирающейся ёмкости.", 0.94, "N231_20_2", []],
+    [at(0.58), "Сейф или денежный ящик открыт без присмотра", "С 0:14 сейф или ящик для хранения наличных открыт, рядом никого нет (≈21 с). Это может указывать на несоблюдение порядка хранения наличных на рабочем месте.", 0.81, "N231_20_2", ["N231_76"]],
   ];
   const result = { job_id: "demo", status: "done", verdict: "violation", violations: [] };
   const details = [];
-  for (const [t, type, description, confidence] of demo) {
+  for (const [t, type, description, confidence, main, others] of demo) {
     const image = await captureFrame(t);
-    result.violations.push({ type, timecode_sec: t, description: `${description} Это демо-данные.`,
+    result.violations.push({ type, timecode_sec: t, description: `${description} (демо-данные)`,
                              evidence_frames: image ? [{ timestamp_sec: t, image_base64: image }] : [] });
-    details.push({ confidence, start_sec: Math.max(0, t - 3), end_sec: t + 3, rule: {
-      id: "DEMO", document: "Демо-документ (здесь будет акт из rules/norms.yaml)", number_date: "—",
-      clause: "п. 0", quote: "Здесь появится дословная цитата пункта нормативного акта.", url: "https://adilet.zan.kz/" } });
+    details.push({ confidence, start_sec: Math.max(0, t - 3), end_sec: t + 3, rule: norm(main), other_norms: others.map(norm) });
   }
   entry.jobId = "demo";
   return { result, details };
@@ -204,7 +207,7 @@ function showResult(entry) {
   if (meta) verdict.append(el("p", { className: "verdict-meta", textContent: meta }));
 
   setStatus(violations.length ? `Найдено: ${violations.length}` : "Нарушений нет", violations.length ? "violation" : "clean");
-  $("results-body").replaceChildren(verdict, ...violations.map(renderViolation));
+  $("results-body").replaceChildren(verdict, renderCategoryBar(entry), ...violations.map(renderViolation), renderNotes(entry));
   $("results-foot").hidden = false;
   if (violations.length) countUp(count, violations.length);
   renderMarkers();
@@ -230,7 +233,8 @@ function renderViolation(v, i) {
         src: frameSrc(f), alt: `Кадр ${fmt(f.timestamp_sec)}`, title: fmt(f.timestamp_sec),
         onclick: (e) => { e.stopPropagation(); openFrame(f); } }))),
       rule && el("div", { className: "law" },
-        el("span", { className: "law-title" }, icon("scale", "c-violet"), `${rule.clause} · ${rule.document}`),
+        el("span", { className: "law-title", title: rule.document }, icon("scale", "c-violet"),
+          `${rule.clause} · ${rule.document_short || rule.document}`),
         el("q", { textContent: rule.quote }),
         rule.url && el("a", { href: rule.url, target: "_blank", rel: "noopener", textContent: "Открыть источник ",
                               onclick: (e) => e.stopPropagation() }, icon("external"))),
@@ -247,6 +251,13 @@ function renderMarkers() {
     style: `left: ${(v.timecode_sec / video.duration) * 100}%`,
     onclick: (e) => { e.stopPropagation(); select(i); },
   })));
+  // Manual annotations (library.js) get their own violet markers.
+  (current?.status === "done" ? current.notes || [] : []).filter((n) => n.timecode_sec != null).forEach((n) =>
+    $("timeline").append(el("button", {
+      className: "marker manual", type: "button", title: `${fmt(n.timecode_sec)} · ${n.type} (вручную)`,
+      style: `left: ${(n.timecode_sec / video.duration) * 100}%`,
+      onclick: (e) => { e.stopPropagation(); video.currentTime = n.timecode_sec; },
+    })));
 }
 
 function openFrame(frame) {
@@ -278,29 +289,14 @@ function statusOf(entry) {
   return ["Готово к анализу", ""];
 }
 
-function renderHistory() {
-  $("history-count").textContent = uploads.length || "";
-  $("history-list").replaceChildren(...(uploads.length ? uploads.map((entry) => {
-    const [label, kind] = statusOf(entry);
-    return el("button", {
-      type: "button",
-      className: `history-item ${entry === current ? "active" : ""}`,
-      onclick: () => { open(entry); $("history-dialog").close(); },
-    },
-      el("span", { className: "history-name", textContent: entry.file.name }),
-      el("span", { className: "muted", textContent: entry.addedAt.toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }) }),
-      el("span", { className: kind ? `pill is-${kind}` : "pill", textContent: label }));
-  }) : [el("p", { className: "muted", textContent: "Вы ещё не загружали видео." })]));
-}
-
 // ---------- Actions ----------
 
 function selectFile(f) {
   if (!f) return;
-  const entry = { file: f, url: URL.createObjectURL(f), addedAt: new Date(), status: "ready",
-                  result: null, details: [], error: null, range: null };
+  const entry = { id: newId(), file: f, url: URL.createObjectURL(f), addedAt: new Date(), status: "ready",
+                  result: null, details: [], error: null, range: null, notes: [], categoryIds: [] };
   uploads.unshift(entry);
-  for (const removed of uploads.splice(HISTORY_LIMIT)) URL.revokeObjectURL(removed.url);
+  for (const removed of uploads.splice(HISTORY_LIMIT)) forgetSession(removed);
   open(entry);
 }
 
@@ -339,6 +335,7 @@ async function start() {
     const { result, details } = await analyze(entry);
     Object.assign(entry, { result, details, status: "done", analyzedAt: new Date(),
                            elapsedSec: (performance.now() - started) / 1000 });
+    saveSession(entry); // keep it in the browser library
   } catch (err) {
     entry.status = "failed";
     entry.error = { title: err.status === 401 ? "Неверный API-ключ" : "Ошибка анализа", text: err.message };
@@ -410,13 +407,21 @@ $("range-clear").onclick = () => { current.range = null; renderRange(); };
 
 // ---------- Tabs, theme, dialogs, wiring ----------
 
-document.querySelectorAll(".tab").forEach((tab) => tab.onclick = () => {
-  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
-  $("analyzer-view").hidden = tab.dataset.view !== "analyzer-view";
-  $("norms-view").hidden = tab.dataset.view !== "norms-view";
-  if (tab.dataset.view === "norms-view") loadNorms();
-  else video.pause();
-});
+const VIEWS = ["analyzer-view", "history-view", "norms-view", "filters-view", "categories-view"];
+function showView(view) {
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === view));
+  for (const id of VIEWS) $(id).hidden = id !== view;
+  // The disclaimer is shown only on the analyzer; the norms page shows the base's update date instead.
+  $("footer-disclaimer").hidden = view !== "analyzer-view";
+  $("footer-updated").hidden = view !== "norms-view";
+  if (view !== "analyzer-view") video.pause();
+  document.querySelectorAll(".feed-video").forEach((v) => v.pause());
+  if (view === "history-view") renderHistory();
+  if (view === "norms-view") loadNorms();
+  if (view === "filters-view") renderFilters();
+  if (view === "categories-view") renderCategories();
+}
+document.querySelectorAll(".tab").forEach((tab) => tab.onclick = () => showView(tab.dataset.view));
 
 $("theme-button").onclick = () => {
   const root = document.documentElement;
@@ -437,8 +442,6 @@ $("back-button").onclick = goHome;
 $("file-input").onchange = (e) => selectFile(e.target.files[0]);
 $("change-button").onclick = () => $("file-input").click();
 $("analyze-button").onclick = start;
-$("history-button").onclick = () => { renderHistory(); $("history-dialog").showModal(); };
-$("history-dialog").onclick = (e) => { if (e.target === $("history-dialog")) $("history-dialog").close(); }; // click outside closes
 $("key-button").onclick = () => { $("key-input").value = getKey(); $("key-dialog").showModal(); };
 $("key-dialog").onclose = () => {
   if ($("key-dialog").returnValue === "save") setKey($("key-input").value.trim());
@@ -470,5 +473,9 @@ video.addEventListener("seeked", () => {
 });
 
 $("key-dot").classList.toggle("set", Boolean(getKey()));
-renderHistory();
-showWelcome();
+// Start once every script is loaded: restore the saved library, then draw the start screen.
+document.addEventListener("DOMContentLoaded", async () => {
+  await loadLibrary();
+  renderHistory();
+  showWelcome();
+});
